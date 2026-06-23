@@ -1,0 +1,10 @@
+# Voimareitti (Cyborvent Oy) - Netlify build config.
+# SvelteKit 2 + @sveltejs/adapter-netlify, fully prerendered static output.
+# The adapter writes the static site to build/ and an SSR fallback function to
+# .netlify/functions-internal (a 404 safety net; every real route is prerendered).
+[build]
+  command = "npm run build"
+  publish = "build"
+
+[build.environment]
+  NODE_VERSION = "20"

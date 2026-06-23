@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build output / framework caches
+/build
+/.svelte-kit
+/.netlify
+
+# Environment / secrets (never commit)
+.env
+.env.*
+!.env.example
+
+# OS / editor cruft
+.DS_Store
+*.swp
+*~
+
+# Vite / Vitest config cache (regenerated on every run)
+*.timestamp-*.mjs
+
+# Stray macOS duplicate files ("Foo 2.ts" etc.)
+* 2.ts
+* 2.js
+* 2.svelte
+* 2.mjs
+
+# ---------------------------------------------------------------------------
+# Workshop / source material - NOT part of the published application.
+# These stay local: planning docs, research digests (incl. copyrighted
+# source material), raw image source sheets, and dev-only tooling.
+# ---------------------------------------------------------------------------
+/planning
+/FOOD
+/assets-src
+/temp
+/scripts
+
+# Internal developer docs (kept local, not published)
+/HANDOFF.md
+/ENGINE.md
+/METRICS.md

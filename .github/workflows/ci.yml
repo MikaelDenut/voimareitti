@@ -1,0 +1,44 @@
+name: CI gate
+
+# Runs the full gate on every pull request targeting main, plus on pushes to
+# main as a safety net. The "gate" job is the required status check that must
+# pass before a pull request can be merged (enforced by branch protection).
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: svelte-check + tests + build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type / Svelte check
+        run: npm run check
+
+      - name: Tests
+        run: npm run test
+
+      - name: Build
+        run: npm run build
