@@ -7,7 +7,7 @@
 	let {
 		src,
 		alt = '',
-		placeholder = '/img/placeholders/placeholder-recipe-generic.png',
+		placeholder = '/img/placeholders/placeholder-recipe-generic.webp',
 		loading = 'lazy',
 		klass = ''
 	}: {

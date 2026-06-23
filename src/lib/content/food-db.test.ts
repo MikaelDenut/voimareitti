@@ -136,9 +136,9 @@ describe('food image resolver', () => {
 	});
 
 	it('placeholders use Mikael purpose-made art under /img/placeholders/', () => {
-		expect(placeholderForRole('protein')).toBe('/img/placeholders/role-protein.png');
-		expect(placeholderForFoodGroup('vegetables')).toBe('/img/placeholders/group-vegetables.png');
-		expect(placeholderForCourse('dinner')).toBe('/img/placeholders/placeholder-dinner.png');
-		expect(placeholderForCourse('unknown-course')).toBe('/img/placeholders/placeholder-recipe-generic.png');
+		expect(placeholderForRole('protein')).toBe('/img/placeholders/role-protein.webp');
+		expect(placeholderForFoodGroup('vegetables')).toBe('/img/placeholders/group-vegetables.webp');
+		expect(placeholderForCourse('dinner')).toBe('/img/placeholders/placeholder-dinner.webp');
+		expect(placeholderForCourse('unknown-course')).toBe('/img/placeholders/placeholder-recipe-generic.webp');
 	});
 });
