@@ -17,7 +17,7 @@
 		profile, type DietaryFilter, type FodmapLevel, type MealLabelStyle,
 		type MemberType, MEMBER_TYPE_AGE
 	} from '$lib/profile.svelte';
-	import { ingredients as ALL_INGREDIENTS, getIngredient } from '$lib/content/ingredients';
+	import type { Ingredient } from '$lib/content/ingredients';
 	import { owner } from '$lib/owner.svelte';
 	import { estimateEnergy } from '$lib/engine/engine';
 
@@ -205,12 +205,28 @@
 
 	// Foods to avoid: a searchable exclude list bound to profile.dislikedIngredientIds (the planner already
 	// drops any recipe containing one). Type to filter; tick to add; chip x to remove.
+	// The ingredient DB (the largest content module) is loaded LAZILY (2026-07 audit H2): a static import
+	// here shipped it transitively into every page that renders the ProfilePanel - including the "light"
+	// workout/exercises pages the bundle test protects. The dynamic import splits it into its own chunk,
+	// fetched only when the Food section is actually on screen.
 	let excludeQuery = $state('');
+	let ingDb = $state<{ all: readonly Ingredient[]; get: (id: string) => Ingredient | undefined } | null>(null);
+	let ingDbLoading = false;
+	function loadIngredients() {
+		if (ingDb || ingDbLoading) return;
+		ingDbLoading = true;
+		import('$lib/content/ingredients')
+			.then((m) => { ingDb = { all: m.ingredients, get: m.getIngredient }; })
+			.finally(() => { ingDbLoading = false; });
+	}
+	$effect(() => {
+		if (panelOpen && show('food')) loadIngredients();
+	});
 	const normEx = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 	const excludeResults = $derived.by(() => {
 		const q = normEx(excludeQuery.trim());
-		if (!q) return [] as { id: string; name: string }[];
-		return ALL_INGREDIENTS
+		if (!q || !ingDb) return [] as { id: string; name: string }[];
+		return ingDb.all
 			.filter((i) => !profile.dislikedIngredientIds.includes(i.id))
 			.filter((i) => normEx(L(i.name, lang)).includes(q) || normEx(i.id).includes(q))
 			.slice(0, 8)
@@ -223,10 +239,18 @@
 	function removeExclude(id: string) {
 		profile.dislikedIngredientIds = profile.dislikedIngredientIds.filter((x) => x !== id);
 	}
-	const excludeName = (id: string) => { const d = getIngredient(id); return d ? L(d.name, lang) : id; };
+	const excludeName = (id: string) => { const d = ingDb?.get(id); return d ? L(d.name, lang) : id; };
 
 	// Household add-by-type. Maps the type to a representative age (engine memberKcal stays age-based).
-	let nextMemberId = $state(1);
+	// The id counter is seeded from the PERSISTED members' highest numeric suffix (2026-07 audit H1):
+	// a component-local counter starting at 1 collided with stored ids after a reload - duplicate keyed-each
+	// keys, and removeMember('h1') silently deleted BOTH members (user data loss).
+	let nextMemberId = $state(
+		profile.household.reduce((max, m) => {
+			const n = /^h(\d+)$/.exec(m.id);
+			return n ? Math.max(max, Number(n[1]) + 1) : max;
+		}, 1)
+	);
 	function addMember(type: MemberType) {
 		const label = L(lbl[type], lang) + ' ' + (profile.household.length + 1);
 		profile.household = [

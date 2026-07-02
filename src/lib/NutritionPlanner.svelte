@@ -19,7 +19,8 @@
 	import { ingredients as ALL_INGREDIENTS, getIngredient, type Ingredient, type IngredientRole } from '$lib/content/ingredients';
 	import { recipeImage, ingredientImage } from '$lib/recipe-images';
 	import { estimateEnergy } from '$lib/engine/engine';
-	import { planWeek, batchPlanWeek, eligibleRecipes, memberKcal, computePlanHash, type WeekPlan, type PlanMeal, type AddedFood } from '$lib/engine/meal-planner';
+	import { planWeek, batchPlanWeek, eligibleRecipes, memberKcal, computePlanHash, isOmnivoreProfile, SUBSTITUTE_RECIPE_IDS, type WeekPlan, type PlanMeal, type AddedFood } from '$lib/engine/meal-planner';
+	import { householdServingCap } from '$lib/nutrition/constants';
 	import { dietAnnotations, type NutrientChip } from '$lib/recipe-filters';
 	import { ingredientSwapOptions } from '$lib/ingredient-swap';
 	import {
@@ -34,6 +35,7 @@
 	import { profile } from '$lib/profile.svelte';
 	import { saveMeal } from '$lib/saved.svelte';
 	import { currentPlan, planSettingsSig } from '$lib/plan.svelte';
+	import { DAY_NAMES, MICRO_LABELS, MIC, microUnit, microImg } from '$lib/nutrition-labels';
 
 	let {
 		lang,
@@ -69,12 +71,8 @@
 		? weeklyMicroBand(wkMicros[k] / div, microLim.target[k] * tmul, microLim.ul[k] ? microLim.ul[k] * tmul : microLim.ul[k])
 		: 'good');
 
-	const dayNames: Loc[] = [
-		{ en: 'Mon', fi: 'Ma', hu: 'Hét', sv: 'Mån' }, { en: 'Tue', fi: 'Ti', hu: 'Kedd', sv: 'Tis' },
-		{ en: 'Wed', fi: 'Ke', hu: 'Sze', sv: 'Ons' }, { en: 'Thu', fi: 'To', hu: 'Csü', sv: 'Tor' },
-		{ en: 'Fri', fi: 'Pe', hu: 'Pén', sv: 'Fre' }, { en: 'Sat', fi: 'La', hu: 'Szo', sv: 'Lör' },
-		{ en: 'Sun', fi: 'Su', hu: 'Vas', sv: 'Sön' }
-	];
+	// Shared label maps (nutrition-labels.ts) - one source across planner / snapshot / PDF (audit M5).
+	const dayNames = DAY_NAMES;
 	const lbl: Record<string, Loc> = {
 		title: { en: 'Weekly meal plan', fi: 'Viikon ateriasuunnitelma', hu: 'Heti étrend', sv: 'Veckans matplan' },
 		resultTitle: { en: 'Your nutrition plan', fi: 'Ravitsemussuunnitelmasi', hu: 'A táplálkozási terved', sv: 'Din nutritionsplan' },
@@ -95,8 +93,9 @@
 		sessBal: { en: 'Balanced', fi: 'Tasapainoinen', hu: 'Kiegyensúlyozott', sv: 'Balanserat' },
 		sessMax: { en: 'I enjoy cooking', fi: 'Pidän kokkaamisesta', hu: 'Szeretek főzni', sv: 'Jag gillar att laga mat' },
 		leftover: { en: 'Leftover', fi: 'Tähteet', hu: 'Maradék', sv: 'Rester' },
-		leftoverHint: { en: 'Cooked once and eaten across these days. Editing one day changes only that day.', fi: 'Valmistettu kerran ja syöty näinä päivinä. Yhden päivän muokkaus muuttaa vain sen päivän.', hu: 'Egyszer megfőzve, több napon át elfogyasztva. Egy nap szerkesztése csak azt a napot módosítja.', sv: 'Lagad en gång och äts under dessa dagar. Att ändra en dag påverkar bara den dagen.' },
+		leftoverHint: { en: 'Cooked once and eaten across these days. Ingredient changes apply to the whole batch.', fi: 'Valmistettu kerran ja syöty näinä päivinä. Ainesosamuutokset koskevat koko satsia.', hu: 'Egyszer megfőzve, több napon át elfogyasztva. A hozzávalók módosítása az egész adagra érvényes.', sv: 'Lagad en gång och äts under dessa dagar. Ändringar av ingredienser gäller hela satsen.' },
 		dailySupps: { en: 'Daily supplements', fi: 'Päivittäiset lisäravinteet', hu: 'Napi étrend-kiegészítők', sv: 'Dagliga tillskott' },
+		backToPlan: { en: 'Back to your plan', fi: 'Takaisin suunnitelmaan', hu: 'Vissza a tervhez', sv: 'Tillbaka till planen' },
 		save: { en: 'Save plan', fi: 'Tallenna suunnitelma', hu: 'Terv mentése', sv: 'Spara plan' },
 		saved: { en: 'Saved', fi: 'Tallennettu', hu: 'Mentve', sv: 'Sparad' },
 		print: { en: 'Save PDF', fi: 'Tallenna PDF', hu: 'PDF mentése', sv: 'Spara PDF' },
@@ -221,25 +220,7 @@
 	};
 	const COURSE_CATS: Mealtime[] = ['breakfast', 'lunch', 'dinner', 'snack'];
 	const ROLE_CATS: IngredientRole[] = ['fruit', 'vegetable', 'protein', 'carb', 'dairy', 'legume', 'fat', 'liquid'];
-	const micL: Record<string, Loc> = {
-		potassium_mg: { en: 'Potassium', fi: 'Kalium', hu: 'Kálium', sv: 'Kalium' },
-		calcium_mg: { en: 'Calcium', fi: 'Kalsium', hu: 'Kalcium', sv: 'Kalcium' },
-		iron_mg: { en: 'Iron', fi: 'Rauta', hu: 'Vas', sv: 'Järn' },
-		magnesium_mg: { en: 'Magnesium', fi: 'Magnesium', hu: 'Magnézium', sv: 'Magnesium' },
-		zinc_mg: { en: 'Zinc', fi: 'Sinkki', hu: 'Cink', sv: 'Zink' },
-		vitamin_c_mg: { en: 'Vitamin C', fi: 'C-vitamiini', hu: 'C-vitamin', sv: 'C-vitamin' },
-		vitamin_d_ug: { en: 'Vitamin D', fi: 'D-vitamiini', hu: 'D-vitamin', sv: 'D-vitamin' },
-		vitamin_b12_ug: { en: 'Vitamin B12', fi: 'B12-vitamiini', hu: 'B12-vitamin', sv: 'B12-vitamin' },
-		folate_ug: { en: 'Folate', fi: 'Folaatti', hu: 'Folát', sv: 'Folat' }
-	};
-	const MIC = ['potassium_mg', 'calcium_mg', 'iron_mg', 'magnesium_mg', 'zinc_mg', 'vitamin_c_mg', 'vitamin_d_ug', 'vitamin_b12_ug', 'folate_ug'] as const;
-	const microUnit = (k: string) => (k.endsWith('_ug') ? 'µg' : 'mg');
-	// Map a tracked micro key to its supplement illustration file (static/img/supplements/<name>.webp).
-	const MICRO_IMG: Record<string, string> = {
-		potassium_mg: 'potassium', calcium_mg: 'calcium', iron_mg: 'iron', magnesium_mg: 'magnesium',
-		zinc_mg: 'zinc', vitamin_c_mg: 'vitamin-c', vitamin_d_ug: 'vitamin-d', vitamin_b12_ug: 'vitamin-b12', folate_ug: 'folate'
-	};
-	const microImg = (k: string) => `/img/supplements/${MICRO_IMG[k] ?? 'vitamin-d'}.webp`;
+	const micL = MICRO_LABELS; // shared (nutrition-labels.ts, audit M5)
 	const supOf = (meal: PlanMeal) => (meal.additions ?? []).find((a) => a.kind === 'supplement') as Extract<AddedFood, { kind: 'supplement' }> | undefined;
 	const warnLabel: Record<string, keyof typeof lbl> = {
 		'relaxed-nutrients': 'warnRelaxed', 'empty-slot': 'warnEmpty', 'kcal-off': 'warnKcal', 'protein-low': 'warnProtein'
@@ -259,39 +240,65 @@
 	// Leftover badge is computed inline in the result template (batch mode only) via isLeftoverMeal:
 	// "same dish in the same slot on the previous day" (audit C1/P2). Replaces the old firstCookDay map.
 
+	// Clamp numeric inputs to their valid ranges so a cleared or out-of-range field can never silently
+	// produce a wrong plan (2026-07 audit M2: a cleared weight binds null, 10*null = 0, and the target
+	// collapsed to the sex floor with no warning). Mirrors the workout page's clamp + migrate()'s ranges;
+	// written back to the profile so the form shows the value the plan was actually built from.
+	const clampN = (v: unknown, lo: number, hi: number, d: number) => {
+		const n = Number(v);
+		return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d;
+	};
+	let generating = $state(false);
 	function generate() {
-		const energy = estimateEnergy(profile);
-		// Hard block (planning/54 D3): never build a plan from physically impossible custom targets (the
-		// macros need more kcal than the calorie cap). The profile panel shows what to fix; the button is also
-		// disabled, this is the belt-and-suspenders guard.
-		if (energy.targetConflict) return;
-		dishSwapIdx = {}; ingSwapIdx = {};
-		// Fresh seed EVERY generate (planning/43): same settings keep the same calorie/nutrition target fit,
-		// but the actual recipes differ each time. Variety is mandatory, so we do not reuse a fixed seed.
-		seedOffset = (browser ? (Math.floor(Math.random() * 0x7fffffff) >>> 0) : seedOffset + 1);
-		const seed = (profile.profileSeed * 31 + profile.planSeedOffset + seedOffset) >>> 0;
-		// Smart cooking (batch) vs Precise portions. Batch cooks a few dishes + leftovers; precise is the
-		// original one-dish-per-slot planner. Both yield the same WeekPlan shape; optimizeWeek then polishes
-		// (calorie-aware micros + a HARD calorie band; never overshoots, flags micros it cannot fit in band).
-		week = profile.cookingMode === 'batch'
-			? batchPlanWeek({ profile, energy, seed })
-			: planWeek({ profile, energy, nutrientFilters: nutrients, seed });
-		week = optimizeWeek(week, profile, energy).week;
-		// Hold the working plan in memory only (temporary by default); record the settings signature it was
-		// generated under so a later settings change invalidates it. NOT written to localStorage.
-		currentPlan.week = week;
-		currentPlan.sig = planSettingsSig(profile);
-		activeDay = 0;
-		view = 'result';
+		if (generating) return;
+		const run = () => {
+			try {
+				profile.age = clampN(profile.age, 14, 100, 30);
+				profile.weightKg = clampN(profile.weightKg, 30, 300, 75);
+				profile.heightCm = clampN(profile.heightCm, 100, 250, 175);
+				const energy = estimateEnergy(profile);
+				// Hard block (planning/54 D3): never build a plan from physically impossible custom targets (the
+				// macros need more kcal than the calorie cap). The profile panel shows what to fix; the button is also
+				// disabled, this is the belt-and-suspenders guard.
+				if (energy.targetConflict) return;
+				dishSwapIdx = {}; ingSwapIdx = {};
+				// Fresh seed EVERY generate (planning/43): same settings keep the same calorie/nutrition target fit,
+				// but the actual recipes differ each time. Variety is mandatory, so we do not reuse a fixed seed.
+				seedOffset = (browser ? (Math.floor(Math.random() * 0x7fffffff) >>> 0) : seedOffset + 1);
+				const seed = (profile.profileSeed * 31 + profile.planSeedOffset + seedOffset) >>> 0;
+				// Smart cooking (batch) vs Precise portions. Batch cooks a few dishes + leftovers; precise is the
+				// original one-dish-per-slot planner. Both yield the same WeekPlan shape; optimizeWeek then polishes
+				// (calorie-aware micros + a HARD calorie band; never overshoots, flags micros it cannot fit in band).
+				week = profile.cookingMode === 'batch'
+					? batchPlanWeek({ profile, energy, seed })
+					: planWeek({ profile, energy, nutrientFilters: nutrients, seed });
+				week = optimizeWeek(week, profile, energy).week;
+				// Hold the working plan in memory only (temporary by default); record the settings signature it was
+				// generated under so a later settings change invalidates it. NOT written to localStorage.
+				currentPlan.week = week;
+				currentPlan.sig = planSettingsSig(profile);
+				activeDay = 0;
+				view = 'result';
+			} finally {
+				generating = false;
+			}
+		};
+		// Busy state + a paint before the heavy synchronous work (audit M5): on a slow phone Generate can
+		// take seconds; without this the button gives no feedback and looks dead (the old "does nothing" class).
+		generating = true;
+		if (browser && typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(run));
+		else run();
 	}
 	function regenerate() { generate(); }
 	function back() { view = 'landing'; }
 	let justSaved = $state(false);
+	let savedTimer: ReturnType<typeof setTimeout> | undefined;
 	function savePlan() {
 		if (!week) return;
 		saveMeal(new Date().toLocaleDateString(lang), week);
 		justSaved = true;
-		setTimeout(() => (justSaved = false), 2000);
+		clearTimeout(savedTimer); // repeated saves no longer race the reset
+		savedTimer = setTimeout(() => (justSaved = false), 2000);
 	}
 
 	onMount(() => {
@@ -330,13 +337,23 @@
 		if (!meal.recipeId) return;
 		const cur = getRecipe(meal.recipeId);
 		if (!cur) return;
-		const cands = eligibleRecipes(profile).filter((r) => r.id !== cur.id && r.course.some((c) => cur.course.includes(c)));
+		// Mirror the optimizer's swap rules (2026-07 audit L3/H3): never create a same-day duplicate dish,
+		// never cycle a vegan substitute-protein dish onto an omnivore's plan, and cap the kcal-matched
+		// servings at the HOUSEHOLD cap (the solo cap of 3 silently dropped most of a household dish's kcal).
+		const omnivore = isOmnivoreProfile(profile);
+		const usedToday = new Set(
+			week.days[activeDay].meals.flatMap((m, i) => (i !== slotIdx && m.recipeId ? [m.recipeId] : []))
+		);
+		const cands = eligibleRecipes(profile).filter((r) =>
+			r.id !== cur.id && !usedToday.has(r.id) && !(omnivore && SUBSTITUTE_RECIPE_IDS.has(r.id)) &&
+			r.course.some((c) => cur.course.includes(c))
+		);
 		if (cands.length < 1) return;
 		const key = `${activeDay}-${slotIdx}`;
 		const next = ((dishSwapIdx[key] ?? -1) + 1) % cands.length;
 		dishSwapIdx = { ...dishSwapIdx, [key]: next };
 		const pick = cands[next];
-		const s = kcalMatchedServings(meal.kcal, pick.nutritionPerServing.energy_kcal);
+		const s = kcalMatchedServings(meal.kcal, pick.nutritionPerServing.energy_kcal, householdServingCap(week.meta.householdScale));
 		const n = pick.nutritionPerServing;
 		week.days[activeDay].meals[slotIdx] = {
 			slotKey: meal.slotKey, recipeId: pick.id, servings: s,
@@ -378,7 +395,8 @@
 		// swapped-to value), so the option list does not shift between clicks and the index cycles cleanly
 		// through every alternative with no immediate repeat. Avoided foods are never offered.
 		const others = (r?.ingredients ?? []).map((x) => x.ingredientId).filter((id) => id !== originalId);
-		const opts = ingredientSwapOptions(originalId, others, profile.dislikedIngredientIds);
+		// profile passed so every offered swap respects diet/allergen/FODMAP settings (audit C1)
+		const opts = ingredientSwapOptions(originalId, others, profile.dislikedIngredientIds, profile);
 		if (!opts.length) return;
 		const key = `${activeDay}-${slotIdx}-${originalId}`;
 		const next = (ingSwapIdx[key] ?? -1) + 1;
@@ -388,13 +406,34 @@
 		const origKcal = ((from?.per100g.energy_kcal ?? 0) * recIng.grams) / 100; // per-base
 		const grams = from && to ? kcalMatchedGrams(origKcal, to.per100g.energy_kcal, recIng.grams) : recIng.grams;
 		meal.ingredientEdits = [...(meal.ingredientEdits ?? []).filter((e) => e.originalId !== originalId), { originalId, swapToId: toId, grams }];
+		propagateLeftoverEdits(slotIdx);
 		refresh();
 	}
 	function removeIngredient(slotIdx: number, originalId: string) {
 		if (!week) return;
 		const meal = week.days[activeDay].meals[slotIdx];
 		meal.ingredientEdits = [...(meal.ingredientEdits ?? []).filter((e) => e.originalId !== originalId), { originalId, removed: true }];
+		propagateLeftoverEdits(slotIdx);
 		refresh();
+	}
+
+	// Batch mode (2026-07 audit M-C): a leftover run is ONE pot cooked once, so an ingredient edit on any
+	// day of the run must apply to the whole consecutive same-dish/same-slot run - otherwise the shopping
+	// list buys chicken for two days and turkey for one day of the same stew. Walks backward + forward from
+	// the active day and copies the edits (they are per-base-serving, so differing servings are fine).
+	function propagateLeftoverEdits(slotIdx: number) {
+		if (!week || profile.cookingMode !== 'batch') return;
+		const meal = week.days[activeDay].meals[slotIdx];
+		if (!meal.recipeId) return;
+		const edits = meal.ingredientEdits ? meal.ingredientEdits.map((e) => ({ ...e })) : undefined;
+		const apply = (d: number): boolean => {
+			const sib = week!.days[d]?.meals.find((m) => m.recipeId === meal.recipeId && m.slotKey === meal.slotKey);
+			if (!sib) return false;
+			sib.ingredientEdits = edits ? edits.map((e) => ({ ...e })) : undefined;
+			return true;
+		};
+		for (let d = activeDay - 1; d >= 0 && apply(d); d--) { /* walk back */ }
+		for (let d = activeDay + 1; d < week.days.length && apply(d); d++) { /* walk forward */ }
 	}
 
 	// --- added foods: swap / remove -----------------------------------------
@@ -406,7 +445,8 @@
 		const key = `add-${activeDay}-${slotIdx}-${addIdx}`;
 		if (a.kind === 'ingredient') {
 			const exclude = effectiveIngredients(meal).map((e) => e.ingredientId).filter((id) => id !== a.ingredientId);
-			const opts = ingredientSwapOptions(a.ingredientId, exclude, profile.dislikedIngredientIds);
+			// profile passed so every offered swap respects diet/allergen/FODMAP settings (audit C1)
+			const opts = ingredientSwapOptions(a.ingredientId, exclude, profile.dislikedIngredientIds, profile);
 			if (!opts.length) return;
 			const next = (ingSwapIdx[key] ?? -1) + 1;
 			ingSwapIdx = { ...ingSwapIdx, [key]: next };
@@ -417,13 +457,14 @@
 			meal.additions![addIdx] = { kind: 'ingredient', ingredientId: toId, grams };
 		} else if (a.kind === 'recipe') {
 			const cur = getRecipe(a.recipeId);
-			const cands = cur ? eligibleRecipes(profile).filter((r) => r.course.some((c) => cur.course.includes(c))) : [];
-			if (cands.length < 2) return;
-			const next = ((ingSwapIdx[key] ?? 0) + 1) % cands.length;
+			// exclude the current recipe from its own swap cycle (audit L2: one click used to be a no-op)
+			const cands = cur ? eligibleRecipes(profile).filter((r) => r.id !== cur.id && r.course.some((c) => cur.course.includes(c))) : [];
+			if (cands.length < 1) return;
+			const next = ((ingSwapIdx[key] ?? -1) + 1) % cands.length;
 			ingSwapIdx = { ...ingSwapIdx, [key]: next };
 			const pick = cands[next];
 			const origKcal = (cur?.nutritionPerServing.energy_kcal ?? 0) * a.servings;
-			meal.additions![addIdx] = { kind: 'recipe', recipeId: pick.id, servings: kcalMatchedServings(origKcal, pick.nutritionPerServing.energy_kcal) };
+			meal.additions![addIdx] = { kind: 'recipe', recipeId: pick.id, servings: kcalMatchedServings(origKcal, pick.nutritionPerServing.energy_kcal, householdServingCap(week.meta.householdScale)) };
 		}
 		refresh();
 	}
@@ -497,16 +538,24 @@
 		if (!pickSel || pickSel.kind !== 'ingredient') return 0;
 		return isCountable(pickSel.id) ? (piecesToGrams(pickSel.id, pickPieces) ?? pickGrams) : pickGrams;
 	});
+	// A cleared numeric field binds null; never let NaN/0 into the plan (audit M2 follow-up).
+	const posNum = (v: unknown, d: number) => {
+		const n = Number(v);
+		return Number.isFinite(n) && n > 0 ? n : d;
+	};
 	function confirmAdd() {
 		if (!week || !pickSel || pickerTarget === null) return;
 		let addition: AddedFood;
 		if (pickSel.kind === 'ingredient') {
-			const grams = isCountable(pickSel.id) ? (piecesToGrams(pickSel.id, pickPieces) ?? pickGrams) : Math.max(1, Math.round(pickGrams));
-			addition = { kind: 'ingredient', ingredientId: pickSel.id, grams, pieces: isCountable(pickSel.id) ? pickPieces : undefined };
+			const pieces = Math.max(0.5, posNum(pickPieces, 1));
+			const grams = isCountable(pickSel.id) ? (piecesToGrams(pickSel.id, pieces) ?? posNum(pickGrams, 100)) : Math.max(1, Math.round(posNum(pickGrams, 100)));
+			addition = { kind: 'ingredient', ingredientId: pickSel.id, grams, pieces: isCountable(pickSel.id) ? pieces : undefined };
 		} else if (pickSel.kind === 'recipe') {
-			addition = { kind: 'recipe', recipeId: pickSel.id, servings: pickServings };
+			addition = { kind: 'recipe', recipeId: pickSel.id, servings: Math.max(0.5, posNum(pickServings, 1)) };
 		} else {
-			addition = { kind: 'supplement', micro: pickSel.id as MicroKey, amount: Math.max(0, pickAmount) };
+			// basis 'person' (audit M-D): a user-added supplement is a PERSONAL dose - the per-person
+			// household view must not divide it (optimizer lines are household-aggregate and are divided).
+			addition = { kind: 'supplement', micro: pickSel.id as MicroKey, amount: posNum(pickAmount, 0), basis: 'person' };
 		}
 		if (pickerTarget === 'new') {
 			const day = week.days[activeDay];
@@ -602,6 +651,9 @@
 
 <section class="np">
 	{#if view === 'landing'}
+		{#if week}
+			<button type="button" class="ghost backtoplan no-print" onclick={() => (view = 'result')}>{L(lbl.backToPlan, lang)} &rarr;</button>
+		{/if}
 		<ProfilePanel {lang} collapsed={{ training: true }} />
 
 		<section class="planopts">
@@ -635,7 +687,7 @@
 			</div>
 		</section>
 
-		<button type="button" class="go" onclick={generate} disabled={!!energy.targetConflict} aria-disabled={!!energy.targetConflict}>{L(lbl.generate, lang)}</button>
+		<button type="button" class="go" onclick={generate} disabled={!!energy.targetConflict || generating} aria-disabled={!!energy.targetConflict || generating} aria-busy={generating}>{L(lbl.generate, lang)}</button>
 		{#if energy.targetConflict}
 			<p class="gen-block" role="alert">{L(lbl.targetConflictShort, lang)}</p>
 		{/if}
@@ -717,8 +769,8 @@
 							<summary class="mealhead">
 								<span class="slot">{slotLabel(meal)}</span>
 								{#if r}<FoodImage src={recipeImage(r)} alt="" klass="mimg" />{:else if cardImg(meal)}<FoodImage src={cardImg(meal)} alt="" klass="mimg mimg-food" />{/if}
-								<span class="mname">{meal.recipeId ? recipeName(meal.recipeId) : addedMealName(meal)}</span>{#if isLeftover}<span class="leftover-badge" title={L(lbl.leftoverHint, lang)} style="font-size:.68rem;font-weight:600;padding:.08rem .45rem;border-radius:999px;background:#e7f5ec;color:#1a7f4b;margin-left:.4rem;white-space:nowrap;cursor:help;">{L(lbl.leftover, lang)}</span>{/if}
-								<span class="mmeta">{#if sup}{hhActive ? nf1(sup.amount / foodDiv) : sup.amount} {microUnit(sup.micro)}{:else}{hhActive ? nf1((meal.recipeId ? meal.servings : singleServing(meal)) / foodDiv) : (meal.recipeId ? meal.servings : singleServing(meal))} {L(lbl.servings, lang)} . {nf(mm.kcal / foodDiv)} kcal . {nf(mealWeight(meal) / foodDiv)} g{/if}</span>
+								<span class="mname">{meal.recipeId ? recipeName(meal.recipeId) : addedMealName(meal)}</span>{#if isLeftover}<span class="leftover-badge" title={L(lbl.leftoverHint, lang)}>{L(lbl.leftover, lang)}</span>{/if}
+								<span class="mmeta">{#if sup}{hhActive && sup.basis !== 'person' ? nf1(sup.amount / foodDiv) : sup.amount} {microUnit(sup.micro)}{:else}{hhActive ? nf1((meal.recipeId ? meal.servings : singleServing(meal)) / foodDiv) : (meal.recipeId ? meal.servings : singleServing(meal))} {L(lbl.servings, lang)} . {nf(mm.kcal / foodDiv)} kcal . {nf(mealWeight(meal) / foodDiv)} g{/if}</span>
 								<span class="cardicons no-print">
 									{#if !sup && (meal.recipeId || (meal.additions ?? []).length)}
 										<button type="button" class="micon swap" title={L(lbl.swap, lang)} aria-label={L(lbl.swap, lang)} onclick={(e) => { e.preventDefault(); e.stopPropagation(); meal.recipeId ? swapMeal(si) : swapAddition(si, 0); }}>
@@ -754,7 +806,7 @@
 									<div class="facts-wrap">
 										<div class="facts">
 											<div class="facts-head">{L(lbl.factsHead, lang)}</div>
-											<div class="facts-row big"><span>{L(micL[sup.micro] ?? { en: sup.micro, fi: sup.micro, hu: sup.micro, sv: sup.micro }, lang)}</span><b>{hhActive ? nf1(sup.amount / foodDiv) : sup.amount} {microUnit(sup.micro)}</b></div>
+											<div class="facts-row big"><span>{L(micL[sup.micro] ?? { en: sup.micro, fi: sup.micro, hu: sup.micro, sv: sup.micro }, lang)}</span><b>{hhActive && sup.basis !== 'person' ? nf1(sup.amount / foodDiv) : sup.amount} {microUnit(sup.micro)}</b></div>
 											<div class="facts-row sub"><span>{L(lbl.energy, lang)}</span><b>0 kcal</b></div>
 										</div>
 									</div>
@@ -770,11 +822,11 @@
 												{#if ingAnn(row.displayId)}<span class="iann">{ingAnn(row.displayId)}</span>{/if}
 												<span class="igrams">{nf(row.grams)} g{hhLabel(row.displayId, row.grams)}</span>
 												{#if canSwapIng(si, row.originalId)}
-													<button type="button" class="rowicon no-print" title={L(lbl.swap, lang)} aria-label={`${L(lbl.swap, lang)}: ${ingName(row.displayId)}`} onclick={() => swapIngredient(si, row.originalId)}>
+													<button type="button" class="rowicon swap no-print" title={L(lbl.swap, lang)} aria-label={`${L(lbl.swap, lang)}: ${ingName(row.displayId)}`} onclick={() => swapIngredient(si, row.originalId)}>
 														<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4 3 8l4 4"/><path d="M3 8h13a4 4 0 0 1 4 4"/><path d="m17 20 4-4-4-4"/><path d="M21 16H8a4 4 0 0 1-4-4"/></svg>
 													</button>
 												{/if}
-												<button type="button" class="rowicon no-print" title={L(lbl.remove, lang)} aria-label={`${L(lbl.remove, lang)}: ${ingName(row.displayId)}`} onclick={() => removeIngredient(si, row.originalId)}>&times;</button>
+												<button type="button" class="rowicon remove no-print" title={L(lbl.remove, lang)} aria-label={`${L(lbl.remove, lang)}: ${ingName(row.displayId)}`} onclick={() => removeIngredient(si, row.originalId)}>&times;</button>
 											</li>
 										{/each}
 										{#each meal.additions ?? [] as a, ai (ai)}
@@ -791,10 +843,10 @@
 													<span class="addtag">{L(lbl.addedTag, lang)}</span>
 													<span class="igrams">{a.servings} {L(lbl.servings, lang)}</span>
 												{/if}
-												<button type="button" class="rowicon no-print" title={L(lbl.swap, lang)} aria-label={L(lbl.swap, lang)} onclick={() => swapAddition(si, ai)}>
+												<button type="button" class="rowicon swap no-print" title={L(lbl.swap, lang)} aria-label={L(lbl.swap, lang)} onclick={() => swapAddition(si, ai)}>
 													<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4 3 8l4 4"/><path d="M3 8h13a4 4 0 0 1 4 4"/><path d="m17 20 4-4-4-4"/><path d="M21 16H8a4 4 0 0 1-4-4"/></svg>
 												</button>
-												<button type="button" class="rowicon no-print" title={L(lbl.remove, lang)} aria-label={L(lbl.remove, lang)} onclick={() => removeAddition(si, ai)}>&times;</button>
+												<button type="button" class="rowicon remove no-print" title={L(lbl.remove, lang)} aria-label={L(lbl.remove, lang)} onclick={() => removeAddition(si, ai)}>&times;</button>
 											</li>
 										{/each}
 									</ul>
@@ -1009,6 +1061,8 @@
 	.actions { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
 	.back { font: inherit; background: none; border: none; color: var(--accent); cursor: pointer; font-weight: 600; }
 	.ghost { font: inherit; font-weight: 600; color: var(--primary); background: var(--surface); border: 1px solid var(--line); border-radius: 0.6rem; padding: 0.5rem 1rem; min-height: 44px; cursor: pointer; display: inline-flex; align-items: center; text-decoration: none; }
+	.ghost:hover { border-color: var(--accent); }
+	.backtoplan { align-self: flex-start; color: var(--accent); margin-bottom: 0.6rem; }
 	.pd { display: inline-flex; align-items: center; gap: 0.4rem; }
 	.pd-label { font-size: 0.78rem; color: var(--muted); font-weight: 600; }
 	.result-h { margin: 0; font-size: 2em; }
@@ -1042,6 +1096,7 @@
 	.micon.swap:hover { background: var(--accent-soft); border-color: var(--accent); }
 	.micon.remove { color: var(--muted); font-size: 1.15rem; line-height: 1; }
 	.micon.remove:hover { background: #fdecec; border-color: #d98b8b; color: #9a4a13; }
+	.leftover-badge { font-size: 0.68rem; font-weight: 600; padding: 0.08rem 0.45rem; border-radius: 999px; background: #e7f5ec; color: #1a7f4b; margin-left: 0.4rem; white-space: nowrap; cursor: help; }
 	.mealhead { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 5rem 0.5rem 0.7rem; cursor: pointer; list-style: none; flex-wrap: wrap; }
 	.mealhead::-webkit-details-marker { display: none; }
 	.slot { width: 110px; font-size: 0.8rem; color: var(--muted); font-weight: 600; flex: none; }
@@ -1066,8 +1121,13 @@
 	.iann { font-size: 0.75rem; color: var(--accent); font-weight: 600; }
 	.addtag { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 0.05rem 0.4rem; }
 	.igrams { font-size: 0.82rem; color: var(--muted); margin-left: auto; }
-	.rowicon { width: 1.7rem; height: 1.7rem; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 0.4rem; background: var(--surface); color: var(--primary); cursor: pointer; font-size: 1.05rem; line-height: 1; flex: none; padding: 0; }
-	.rowicon:hover { background: var(--accent-soft); border-color: var(--accent); }
+	/* Row icons follow the contract color code like .micon: swap = accent, delete = muted with red hover
+	   (2026-07 parity audit M2 - one style for both broke the code the card icons teach). */
+	.rowicon { width: 1.7rem; height: 1.7rem; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 0.4rem; background: var(--surface); cursor: pointer; font-size: 1.05rem; line-height: 1; flex: none; padding: 0; }
+	.rowicon.swap { color: var(--accent); }
+	.rowicon.swap:hover { background: var(--accent-soft); border-color: var(--accent); }
+	.rowicon.remove { color: var(--muted); }
+	.rowicon.remove:hover { background: #fdecec; border-color: #d98b8b; color: #9a4a13; }
 	.emptyrow { font-size: 0.85rem; padding: 0.3rem 0; }
 	/* Add buttons mirror the workout "+ Add" button (dashed accent border, transparent bg). */
 	.addfood, .addmeal { margin-top: 0.6rem; background: none; border: 1px dashed var(--accent); color: var(--accent); border-radius: 0.5rem; padding: 0.4rem 0.9rem; font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
@@ -1140,6 +1200,7 @@
 		.slot { width: 100%; }
 		.mmeta { margin-left: 0; }
 		.micon { width: 2.4rem; height: 2.4rem; }
+		.rowicon { width: 2.4rem; height: 2.4rem; } /* touch targets on the most-edited surface (audit M2) */
 		.mealhead { padding-right: 6rem; }
 	}
 </style>

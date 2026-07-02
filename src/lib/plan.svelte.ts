@@ -24,6 +24,9 @@ export function planSettingsSig(p: FullProfile): string {
 		iff: p.preferIronFromFood,
 		cm: p.cookingMode, cs: p.cookSessionsPerWeek,
 		pg: p.pregnant, pp: p.postpartum, bf: p.breastfeeding,
+		// trainingGoal shifts the activity factor (fat-loss +0.05) and trimester shifts the pregnancy
+		// kcal bump (0/340/450) - both change the target, so both must invalidate the plan (audit H1).
+		tg: p.trainingGoal, tri: p.pregnant ? p.trimester : 0,
 		a: p.age, s: p.sex, w: p.weightKg, h: p.heightCm, d: p.days,
 		hh: p.household.map((m) => `${m.age}/${m.sex ?? ''}/${m.activity ?? ''}/${m.goal ?? ''}`),
 		ov: [p.kcalOverride ?? '', p.proteinOverride ?? '', p.carbOverride ?? '', p.fatOverride ?? '']

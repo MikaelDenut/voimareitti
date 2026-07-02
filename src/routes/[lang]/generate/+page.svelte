@@ -5,7 +5,7 @@
 	import Seo from '$lib/Seo.svelte';
 	import SiteHeader from '$lib/SiteHeader.svelte';
 	import PrintGuide from '$lib/PrintGuide.svelte';
-	import { generate, swapOptions, mobilityOptions, prefersEasier, type Profile, type Plan } from '$lib/engine/engine';
+	import { generate, swapOptions, mobilityOptions, sessionFillOptions, prefersEasier, type Profile, type Plan } from '$lib/engine/engine';
 	import { profile } from '$lib/profile.svelte';
 	import InfoTip from '$lib/InfoTip.svelte';
 	import { glossary } from '$lib/content/glossary';
@@ -16,6 +16,7 @@
 	import ProfilePanel from '$lib/ProfilePanel.svelte';
 	import SegmentedControl from '$lib/SegmentedControl.svelte';
 	import { saveWorkout } from '$lib/saved.svelte';
+	import { currentWorkout } from '$lib/workout.svelte';
 	import { owner } from '$lib/owner.svelte';
 	import { exerciseImages, exerciseImageSrc, maleImages, prenatalImages } from '$lib/content/exercise-images';
 	import { nutritionTopics } from '$lib/content/nutrition-content';
@@ -72,6 +73,10 @@
 
 	let result = $state<Plan | null>(null);
 	let used = $state<Profile | null>(null);
+	// Landing vs result view, decoupled from `result` (2026-07 parity audit H2): Back now returns to the
+	// landing WITHOUT destroying the plan (mirrors the nutrition planner); the plan also survives in-app
+	// navigation via the currentWorkout store, manual edits included.
+	let showResult = $state(false);
 	// Bias toward easier variations (swap ordering + tip prominence) for the cohort that benefits.
 	const needsEasier = $derived(used ? prefersEasier(used) : false);
 	// Which figure variant the card is showing, as a label chip (null = the neutral default, no chip).
@@ -114,11 +119,22 @@
 					swaps = {};
 					doneDays = {};
 					acked = true;
+					showResult = true;
+					currentWorkout.plan = result;
+					currentWorkout.used = used;
 					safeSet('vr-ack', '1');
 					safeSet('vr-generated', '1');
 				}
 			} catch { /* ignore malformed handoff */ }
 			try { localStorage.removeItem('voimareitti.workout.live'); } catch { /* ignore */ }
+		}
+		// Restore the in-memory working plan across in-app navigation (manual edits preserved) - mirrors
+		// the nutrition planner's currentPlan restore. A full reload falls back to the deterministic re-run.
+		if (!result && currentWorkout.plan && currentWorkout.used) {
+			result = currentWorkout.plan;
+			used = currentWorkout.used;
+			assignUids();
+			showResult = true;
 		}
 		// profile (shared store) + owner ($lib/owner.svelte) load + persist themselves.
 		if (!result && safeGet('vr-generated') === '1') run(true);
@@ -199,14 +215,15 @@
 		delete swaps[uid];
 	}
 
-	// Add another exercise of the session's movement pattern (mirror of the warm-up "add").
+	// Add another exercise of the session's movement pattern (mirror of the warm-up "add"). An EMPTY
+	// session falls back to the session-key pattern pool (2026-07 parity audit H3): before this, a user
+	// who removed every exercise from a day could not refill it without regenerating (losing all edits).
 	function addToSession(si: number) {
 		if (!result || !used) return;
 		const s = result.sessions[si];
-		const ref = s.items[0]?.exercise;
-		if (!ref) return;
 		const excl = s.items.map((it) => it.exercise.id);
-		const opts = swapOptions(used, ref, excl);
+		const ref = s.items[0]?.exercise;
+		const opts = ref ? swapOptions(used, ref, excl) : sessionFillOptions(used, s.titleKey, excl);
 		if (!opts.length) return;
 		const gd = result.guidance;
 		s.items = [...s.items, { exercise: opts[0], sets: gd.setsPerExercise, reps: gd.reps, restSec: gd.restSec, tempo: gd.tempo, uid: nextUid() }];
@@ -237,6 +254,9 @@
 		doneDays = {};
 		result = generate(snap, seedOffset);
 		assignUids();
+		showResult = true;
+		currentWorkout.plan = result;
+		currentWorkout.used = used;
 		if (browser) {
 			safeSet('vr-generated', '1');
 			if (!restore) queueMicrotask(() => {
@@ -255,20 +275,23 @@
 	const compactLbl: Loc = { en: 'Compact', fi: 'Tiivis', hu: 'Tömör', sv: 'Kompakt' };
 	const fullLbl: Loc = { en: 'Full', fi: 'Täysi', hu: 'Teljes', sv: 'Fullständig' };
 	let justSaved = $state(false);
+	let savedTimer: ReturnType<typeof setTimeout> | undefined;
 	function saveProgram() {
 		if (!result || !used) return;
 		// Store the generated PLAN snapshot (with any manual swaps/removes/adds) + the profile used.
 		saveWorkout(new Date().toLocaleDateString(lang), { plan: result, used });
 		justSaved = true;
-		setTimeout(() => (justSaved = false), 2000);
+		clearTimeout(savedTimer); // repeated saves no longer race the reset
+		savedTimer = setTimeout(() => (justSaved = false), 2000);
 	}
 
+	// Back is NON-destructive (2026-07 parity audit H2, mirrors the nutrition planner): return to the
+	// landing, keep the plan + every manual edit. Generate/Regenerate replace it; "Back to your plan"
+	// on the landing reopens it.
 	function back() {
-		result = null;
-		used = null;
-		swaps = {};
-		if (browser) safeSet('vr-generated', '0');
+		showResult = false;
 	}
+	const backToPlanLbl: Loc = { en: 'Back to your plan', fi: 'Takaisin suunnitelmaan', hu: 'Vissza a tervhez', sv: 'Tillbaka till planen' };
 
 	function regenerate() { seedOffset += 1; run(); }
 
@@ -348,8 +371,11 @@
 		<img class="pagebanner no-print" src="/img/banners/training.webp" alt="" />
 		<h1>{L(guideTitleLbl, lang)}</h1>
 		<p class="muted intro">{T('gen_intro')}</p>
-		{#if !result}
+		{#if !result || !showResult}
 		<form class="form" onsubmit={(e) => { e.preventDefault(); run(); }}>
+			{#if result}
+				<button type="button" class="ghost backtoplan no-print" onclick={() => (showResult = true)}>{L(backToPlanLbl, lang)} &rarr;</button>
+			{/if}
 			<ProfilePanel {lang} collapsed={{ food: true }} />
 
 			<section class="planopts">
@@ -568,11 +594,12 @@
 							</article>
 						{/each}
 					</div>
-					{#if s.items.length}
-						<button class="addbtn no-print" type="button" onclick={() => addToSession(i)}>+ {T('add_more')}</button>
-					{:else}
+					{#if !s.items.length}
 						<p class="tip no-print">{T('empty_session_hint')}</p>
 					{/if}
+					<!-- Always show the add control: an emptied session is refillable via sessionFillOptions
+					     (2026-07 parity audit H3 - mirrors the nutrition empty slot's "+ Add food"). -->
+					<button class="addbtn no-print" type="button" onclick={() => addToSession(i)}>+ {T('add_more')}</button>
 				{/each}
 			</section>
 			{/if}
@@ -650,6 +677,7 @@
 	.back { font: inherit; background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; font-weight: 600; }
 	.ghost { font: inherit; font-weight: 600; color: var(--primary); background: var(--surface); border: 1px solid var(--line); border-radius: 0.6rem; padding: 0.5rem 1rem; min-height: 44px; cursor: pointer; display: inline-flex; align-items: center; text-decoration: none; }
 	.ghost:hover { border-color: var(--accent); }
+	.backtoplan { align-self: flex-start; color: var(--accent); }
 	.overview { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0; }
 	.pill { background: var(--accent-soft); color: var(--primary); border-radius: 2rem; padding: 0.2rem 0.7rem; font-size: 0.8rem; font-weight: 600; }
 	.disc { font-size: 0.78rem; color: var(--muted); margin: 0.5rem 0 0; max-width: 60ch; }

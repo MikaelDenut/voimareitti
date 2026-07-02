@@ -18,6 +18,7 @@
 	import { goto } from '$app/navigation';
 	import { estimateEnergy } from '$lib/engine/engine';
 	import { saved, deleteMeal, type SavedPlan } from '$lib/saved.svelte';
+	import { isValidWeekPlanPayload } from '$lib/saved-core';
 	import type { WeekPlan } from '$lib/engine/meal-planner';
 	import ProfilePanel from '$lib/ProfilePanel.svelte';
 	import MealSnapshot from '$lib/MealSnapshot.svelte';
@@ -49,7 +50,9 @@
 	// Saved-plan snapshot: opening a saved plan shows a read-only result-style view in-page (NOT a
 	// navigation to the shopping list). Back returns here to the Saved tab.
 	let viewing = $state<SavedPlan<WeekPlan> | null>(null);
-	function openMeal(s: SavedPlan<WeekPlan>) { viewing = s; }
+	// Guard the payload shape before rendering (2026-07 audit M3): an old-schema or corrupted saved plan
+	// used to throw inside MealSnapshot and take down the whole page until localStorage was cleared.
+	function openMeal(s: SavedPlan<WeekPlan>) { if (isValidWeekPlanPayload(s.payload)) viewing = s; }
 	function useMeal() {
 		if (!viewing) return;
 		// Load the saved plan into the in-memory working store and navigate WITHOUT a full reload (so the

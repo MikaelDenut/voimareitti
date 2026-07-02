@@ -58,3 +58,15 @@ export function parseSaved<T>(raw: string | null): SavedPlan<T>[] {
 		return [];
 	}
 }
+
+/** Shape guard for a saved MEAL payload (2026-07 audit M3): a WeekPlan-looking object with a days array
+ *  of meal arrays and a meta object. An old-schema or hand-corrupted payload used to throw inside the
+ *  snapshot render and take down the whole recipes page until localStorage was cleared. Kept structural
+ *  (not exhaustive) so future ADDITIVE WeekPlan fields never invalidate old saves. */
+export function isValidWeekPlanPayload(p: unknown): boolean {
+	if (!p || typeof p !== 'object') return false;
+	const w = p as { days?: unknown; meta?: unknown };
+	if (!Array.isArray(w.days) || w.days.length === 0) return false;
+	if (!w.meta || typeof w.meta !== 'object') return false;
+	return w.days.every((d) => !!d && typeof d === 'object' && Array.isArray((d as { meals?: unknown }).meals));
+}

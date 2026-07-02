@@ -31,8 +31,10 @@ export type AddedFood =
 	| { kind: 'ingredient'; ingredientId: string; grams: number; pieces?: number }
 	| { kind: 'recipe'; recipeId: string; servings: number }
 	// A supplement provides one micronutrient (no kcal/macros); micro is a tracked MicroKey, amount in its
-	// unit (mg/ug). Delete-only in the UI (never swapped).
-	| { kind: 'supplement'; micro: string; amount: number };
+	// unit (mg/ug). Delete-only in the UI (never swapped). `basis` (2026-07 audit M-D): optimizer-created
+	// lines are HOUSEHOLD-aggregate doses (divided back in the per-person view); a user-added supplement is
+	// a PERSONAL dose ('person') and must NOT be divided. Absent = household (legacy/optimizer lines).
+	| { kind: 'supplement'; micro: string; amount: number; basis?: 'household' | 'person' };
 
 export interface IngredientEdit {
 	originalId: string;   // the recipe ingredient being edited
@@ -464,15 +466,23 @@ export function planWeek(opts: PlanOptions): WeekPlan {
 		// calories with fruit/veg, so a low-calorie day can still reach its protein band. One serving, kept inside
 		// the kcal band, drawn from the safety-filtered pool (respects diet + avoid), honouring the omnivore
 		// down-weight and within-week variety. This is the lever that makes the high-protein + low-cal combo land.
+		// 2026-07 audit H2: the day totals are HOUSEHOLD-aggregate, so the floor must be the household
+		// floor (proteinBand[0] * sCap) - the solo floor was virtually never short for a household, so
+		// this lever (and the repair below + the warning) silently never fired. Solo (sCap 1) unchanged.
+		// The snack is scaled to the household (0.5 steps) so one shared snack actually moves the needle.
+		const proteinFloorHH = energy.proteinBand[0] * sCap;
+		const snackServings = Math.max(1, Math.round(sCap * 2) / 2);
 		let snacksAdded = 0;
-		while (totals.protein < energy.proteinBand[0] && snacksAdded < 3) {
+		while (totals.protein < proteinFloorHH && snacksAdded < 3) {
 			const fits = (r: Recipe) =>
 				r.mealtimes.includes('snack') &&
 				r.nutritionPerServing.protein_g >= PROTEIN_SNACK_MIN_G &&
 				r.nutritionPerServing.energy_kcal <= PROTEIN_SNACK_MAX_KCAL &&
 				!usedToday.has(r.id) &&
 				!(omnivore && SUBSTITUTE_RECIPE_IDS.has(r.id)) &&
-				totals.kcal + r.nutritionPerServing.energy_kcal <= targetKcal * (1 + KCAL_TOLERANCE);
+				// audit L4: honour the daily protein-shake cap here too (the slot picker already does)
+				!(isProteinShake(r) && shakesToday >= PROTEIN_SHAKE_CAP_PER_DAY) &&
+				totals.kcal + r.nutritionPerServing.energy_kcal * snackServings <= targetKcal * (1 + KCAL_TOLERANCE);
 			const all = hardPool.filter(fits);
 			if (!all.length) break;
 			const fresh = all.filter((r) => !recent.includes(r.id));
@@ -483,10 +493,11 @@ export function planWeek(opts: PlanOptions): WeekPlan {
 			meals.push({
 				slotKey: mainSlotKey, recipeId: null, servings: 0,
 				kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0,
-				additions: [{ kind: 'recipe', recipeId: snack.id, servings: 1 }]
+				additions: [{ kind: 'recipe', recipeId: snack.id, servings: snackServings }]
 			});
-			totals.kcal += sn.energy_kcal; totals.protein += sn.protein_g; totals.carbs += sn.carbohydrates_g; totals.fat += sn.fat_g; totals.fiber += sn.fiber_g;
+			totals.kcal += sn.energy_kcal * snackServings; totals.protein += sn.protein_g * snackServings; totals.carbs += sn.carbohydrates_g * snackServings; totals.fat += sn.fat_g * snackServings; totals.fiber += sn.fiber_g * snackServings;
 			usedToday.add(snack.id);
+			if (isProteinShake(snack)) shakesToday++;
 			recent.push(snack.id); // rotate snacks across days too, not just within a day
 			{ const pp = PRIMARY_PROTEIN.get(snack.id); if (pp) proteinUsed[pp] = (proteinUsed[pp] ?? 0) + 1; }
 			snacksAdded++;
@@ -531,7 +542,7 @@ export function planWeek(opts: PlanOptions): WeekPlan {
 		// meal for a higher-protein-density same-mealtime recipe at MATCHED kcal - this lifts protein while
 		// keeping the day inside the kcal band. Soft + bounded; respects the same eligible/throttled pool and
 		// the no-same-day-repeat rule. If no improving swap exists, the day stays as-is and the warning fires.
-		const proteinFloor = energy.proteinBand[0];
+		const proteinFloor = proteinFloorHH; // household floor (audit H2); solo identical
 		let pGuard = 0;
 		while (totals.protein < proteinFloor && pGuard++ < 16) {
 			let best: { mi: number; cand: Recipe; servings: number; dProtein: number } | null = null;
@@ -553,8 +564,9 @@ export function planWeek(opts: PlanOptions): WeekPlan {
 					s = Math.max(0.5, Math.min(3 * sCap, Math.round(s * 2) / 2));
 					const newK = cand.nutritionPerServing.energy_kcal * s;
 					const dayKcalAfter = totals.kcal - m.kcal + newK;
-					// keep the day inside [target*0.90, target*(1+tol)] so protein repair never breaks kcal
-					if (dayKcalAfter > targetKcal * (1 + KCAL_TOLERANCE) || dayKcalAfter < targetKcal * 0.90) continue;
+					// keep the day inside the kcal band so protein repair never breaks it (audit M-E: the old
+					// hardcoded 0.90 floor predated the 7% band and let a repair push a day newly under-band)
+					if (dayKcalAfter > targetKcal * (1 + KCAL_TOLERANCE) || dayKcalAfter < targetKcal * (1 - KCAL_TOLERANCE)) continue;
 					const dP = cand.nutritionPerServing.protein_g * s - m.protein;
 					if (dP > 0 && (!best || dP > best.dProtein)) best = { mi, cand, servings: s, dProtein: dP };
 				}
@@ -588,7 +600,7 @@ export function planWeek(opts: PlanOptions): WeekPlan {
 
 		// Warnings tally.
 		if (Math.abs(totals.kcal - targetKcal) > targetKcal * KCAL_TOLERANCE) kcalOffDays++;
-		if (totals.protein < energy.proteinBand[0] + PROTEIN_BAND[0]) proteinShortDays++;
+		if (totals.protein < proteinFloorHH + PROTEIN_BAND[0]) proteinShortDays++;
 
 		// Update variety window.
 		for (const m of meals) if (m.recipeId) recent.push(m.recipeId);
@@ -769,21 +781,24 @@ export function batchPlanWeek(opts: PlanOptions): WeekPlan {
 		// Band-safe (gated to the upper band), omnivore-safe (no substitutes), deterministic.
 		{
 			const usedToday = new Set(meals.map((m) => m.recipeId).filter((x): x is string => !!x));
+			// 2026-07 audit H2: household floor + household-scaled snack (see planWeek lever 1.5); solo identical.
+			const proteinFloorHH = energy.proteinBand[0] * sCap;
+			const snackServings = Math.max(1, Math.round(sCap * 2) / 2);
 			let pAdded = 0;
-			while (tot.protein < energy.proteinBand[0] && pAdded < 3) {
+			while (tot.protein < proteinFloorHH && pAdded < 3) {
 				const cands = sorted.filter((r) =>
 					r.mealtimes.includes('snack') &&
 					r.nutritionPerServing.protein_g >= PROTEIN_SNACK_MIN_G &&
 					r.nutritionPerServing.energy_kcal <= PROTEIN_SNACK_MAX_KCAL &&
 					!usedToday.has(r.id) &&
 					!(omnivore && SUBSTITUTE_RECIPE_IDS.has(r.id)) &&
-					tot.kcal + r.nutritionPerServing.energy_kcal <= targetKcal * (1 + KCAL_TOLERANCE)
+					tot.kcal + r.nutritionPerServing.energy_kcal * snackServings <= targetKcal * (1 + KCAL_TOLERANCE)
 				).sort((a, b) => b.nutritionPerServing.protein_g - a.nutritionPerServing.protein_g || a.id.localeCompare(b.id));
 				if (!cands.length) break;
 				const sn = cands[0].nutritionPerServing;
-				meals.push({ slotKey: mainKey, recipeId: null, servings: 0, kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, additions: [{ kind: 'recipe', recipeId: cands[0].id, servings: 1 }] });
+				meals.push({ slotKey: mainKey, recipeId: null, servings: 0, kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, additions: [{ kind: 'recipe', recipeId: cands[0].id, servings: snackServings }] });
 				usedToday.add(cands[0].id);
-				tot.kcal += sn.energy_kcal; tot.protein += sn.protein_g; tot.carbs += sn.carbohydrates_g; tot.fat += sn.fat_g; tot.fiber += sn.fiber_g;
+				tot.kcal += sn.energy_kcal * snackServings; tot.protein += sn.protein_g * snackServings; tot.carbs += sn.carbohydrates_g * snackServings; tot.fat += sn.fat_g * snackServings; tot.fiber += sn.fiber_g * snackServings;
 				pAdded++;
 			}
 		}

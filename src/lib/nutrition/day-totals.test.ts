@@ -118,8 +118,14 @@ describe('calorie-matched portions', () => {
 		expect(kcalMatchedServings(600, 300)).toBe(2);
 		expect(kcalMatchedServings(300, 300)).toBe(1);
 		expect(kcalMatchedServings(50, 300)).toBe(0.5);   // tiny -> floor
-		expect(kcalMatchedServings(3000, 300)).toBe(3);   // huge -> cap
+		expect(kcalMatchedServings(3000, 300)).toBe(3);   // huge -> cap (default solo cap)
 		expect(kcalMatchedServings(400, 0)).toBe(1);      // guard
+	});
+	it('kcalMatchedServings honours a household cap (2026-07 audit H3)', () => {
+		// A 12-serving household dinner must be able to swap to ~12 servings, not silently drop to 3.
+		expect(kcalMatchedServings(3600, 300, 24.8)).toBe(12);
+		expect(kcalMatchedServings(9000, 300, 24.8)).toBe(24.5); // still capped, snapped to 0.5
+		expect(kcalMatchedServings(3000, 300, 3)).toBe(3);       // explicit solo cap identical to default
 	});
 	it('kcalMatchedGrams snaps to a neat step and guards zero-energy foods', () => {
 		expect(kcalMatchedGrams(100, 50, 80)).toBe(200);  // 200 g -> step 25

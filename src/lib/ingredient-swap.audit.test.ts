@@ -35,3 +35,53 @@ describe('ingredientSwapOptions - avoid + stable cycle', () => {
 		expect(dead).toEqual([]);
 	});
 });
+
+// 2026-07 audit C1: the swap family used to ignore every diet/allergen/FODMAP filter - one tap could put
+// meat on a vegan plan or a nut on a nut-allergy plan. With the profile passed, EVERY offered option must
+// pass ingredientAllowed. These run the real ranking over the real DB for the highest-risk combos.
+describe('ingredientSwapOptions - diet/allergen/FODMAP safety (audit C1)', () => {
+	const prof = (over: Partial<{ dietaryFilters: string[]; fodmap: 'off' | 'gentle' | 'strict'; dislikedIngredientIds: string[] }>) => ({
+		dietaryFilters: [], fodmap: 'off' as const, dislikedIngredientIds: [], ...over
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	}) as any;
+
+	it('vegan profile is never offered an animal product', () => {
+		const p = prof({ dietaryFilters: ['vegan'] });
+		for (const src of ['tofu', 'chicken-breast', 'salmon', 'egg']) {
+			for (const opt of ingredientSwapOptions(src, [], [], p)) {
+				expect(opt.dietary.vegan, `${src} -> ${opt.id}`).toBe(true);
+			}
+		}
+	});
+
+	it('nut-free profile is never offered a nut', () => {
+		const p = prof({ dietaryFilters: ['nutFree'] });
+		for (const src of ['sunflower-seeds', 'chia-seeds', 'peanut-butter']) {
+			for (const opt of ingredientSwapOptions(src, [], [], p)) {
+				expect(opt.dietary.nutFree, `${src} -> ${opt.id}`).toBe(true);
+			}
+		}
+	});
+
+	it('strict FODMAP profile is only offered low-FODMAP foods', () => {
+		const p = prof({ fodmap: 'strict' });
+		for (const src of ['carrot', 'courgette', 'potato']) {
+			for (const opt of ingredientSwapOptions(src, [], [], p)) {
+				expect(opt.dietary.fodmap, `${src} -> ${opt.id}`).toBe('low');
+			}
+		}
+	});
+
+	it('gluten-free profile is never offered a gluten source', () => {
+		const p = prof({ dietaryFilters: ['glutenFree'] });
+		for (const src of ['potato', 'white-rice', 'oats']) {
+			for (const opt of ingredientSwapOptions(src, [], [], p)) {
+				expect(opt.dietary.glutenFree, `${src} -> ${opt.id}`).toBe(true);
+			}
+		}
+	});
+
+	it('omitting the profile keeps the original unfiltered behavior (back-compat)', () => {
+		expect(ingredientSwapOptions('salmon').length).toBeGreaterThan(0);
+	});
+});

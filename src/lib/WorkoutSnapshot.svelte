@@ -205,6 +205,10 @@
 										<dt>{T('ex_purpose')}</dt><dd>{L(it.exercise.purpose, lang)}</dd>
 										<dt>{T('ex_setup')}</dt><dd>{L(it.exercise.setup, lang)}</dd>
 										<dt>{T('ex_mistakes')}</dt><dd>{L(it.exercise.mistakes, lang)}</dd>
+										<!-- Easier/Harder mirror the live result (2026-07 parity audit M10: read-only means
+										     no buttons, not less information). -->
+										<dt>{T('ex_easier')}</dt><dd>{L(it.exercise.easier, lang)}</dd>
+										<dt>{T('ex_harder')}</dt><dd>{L(it.exercise.harder, lang)}</dd>
 										{#if it.exercise.safety}<dt class="warn">{T('ex_safety')}</dt><dd>{L(it.exercise.safety, lang)}</dd>{/if}
 									</dl>
 								</details>

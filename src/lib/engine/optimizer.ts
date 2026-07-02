@@ -10,7 +10,7 @@ import type { FullProfile } from '../profile-core';
 import type { EnergyResult } from './engine';
 import { getIngredient } from '../content/ingredients';
 import { ingredientAllowed } from '../recipe-filters';
-import { scoreWeek } from '../nutrition/score';
+import { scoreWeek, createScoreCache } from '../nutrition/score';
 import { dayTotals } from '../nutrition/day-totals';
 import { generateMoves, generateSwaps } from '../nutrition/moves';
 import { OPTIMIZER, KCAL_TOLERANCE, householdServingCap } from '../nutrition/constants';
@@ -87,7 +87,11 @@ export function optimizeWeek(initial: WeekPlan, profile: FullProfile, energy: En
 	// serializable (it is persisted to localStorage), so a JSON round-trip clones it safely AND strips the
 	// proxy; every downstream clone (moves.ts) then operates on a plain object.
 	let cur: WeekPlan = JSON.parse(JSON.stringify(initial));
-	let curScore = scoreWeek(cur, profile, energy).total;
+	// Per-run day-computation cache (2026-07 audit M1): candidate weeks share untouched day objects by
+	// reference (moves.cloneDay), so caching dayTotals/dayMicros per day object makes scoring a candidate
+	// cost ~1 recomputed day instead of 7. Safe within one run: moves never mutate a day in place.
+	const cache = createScoreCache();
+	let curScore = scoreWeek(cur, profile, energy, cache).total;
 	const warmScore = curScore;
 	const accepted: string[] = [];
 	let iterations = 0;
@@ -96,7 +100,7 @@ export function optimizeWeek(initial: WeekPlan, profile: FullProfile, energy: En
 	const pickBest = (moves: { kind: string; week: WeekPlan }[]) => {
 		let best: WeekPlan | null = null, bestKind = '', bestScore = curScore;
 		for (const mv of moves) {
-			const s = scoreWeek(mv.week, profile, energy).total;
+			const s = scoreWeek(mv.week, profile, energy, cache).total;
 			if (s < bestScore - OPTIMIZER.epsilon) { bestScore = s; best = mv.week; bestKind = mv.kind; }
 		}
 		return best ? { week: best, kind: bestKind, score: bestScore } : null;
@@ -104,7 +108,7 @@ export function optimizeWeek(initial: WeekPlan, profile: FullProfile, energy: En
 	// Swaps are the costly neighbourhood; accept the FIRST improving swap rather than scoring them all.
 	const pickFirst = (moves: { kind: string; week: WeekPlan }[]) => {
 		for (const mv of moves) {
-			const s = scoreWeek(mv.week, profile, energy).total;
+			const s = scoreWeek(mv.week, profile, energy, cache).total;
 			if (s < curScore - OPTIMIZER.epsilon) return { week: mv.week, kind: mv.kind, score: s };
 		}
 		return null;
