@@ -13,6 +13,7 @@
 	import { mealMacros, mealWeight, dayTotals, dayMicros, weekMicros, dayCalorieStatus, effectiveIngredients, TRACKED_MICROS } from '$lib/nutrition/day-totals';
 	import { microLimits, weeklyMicroBand } from '$lib/nutrition/micro-limits';
 	import { householdAmount, householdBuyAmount, UNIT_LABELS } from '$lib/nutrition/household-units';
+	import { MICRO_LABELS, microUnit, DIET_LABELS, ALCOHOL_FREE_LABEL, FODMAP_LABELS } from '$lib/nutrition-labels';
 
 	let {
 		mode,
@@ -32,7 +33,8 @@
 
 	const nf = (n: number) => new Intl.NumberFormat(lang).format(Math.round(n));
 	const fmt1 = (n: number) => new Intl.NumberFormat(lang, { maximumFractionDigits: 1 }).format(n);
-	const today = $derived(new Date().toLocaleDateString(lang));
+	// Same date locale rule as PrintGuide (en -> en-GB), so the two PDFs of one brand family agree (audit M7).
+	const today = $derived(new Date().toLocaleDateString(lang === 'en' ? 'en-GB' : lang));
 	const ownerLine = $derived([owner?.name, owner?.phone, owner?.email].filter(Boolean).join('  ·  '));
 
 	const lbl: Record<string, Loc> = {
@@ -124,20 +126,9 @@
 		return { kcal: k, protein: p };
 	});
 
-	// Micronutrients for the PDF.
+	// Micronutrients for the PDF - shared label maps (nutrition-labels.ts, audit M5).
 	const MIC = ['potassium_mg', 'calcium_mg', 'iron_mg', 'magnesium_mg', 'zinc_mg', 'vitamin_c_mg', 'vitamin_d_ug', 'vitamin_b12_ug', 'folate_ug'] as const;
-	const microUnit = (k: string) => (k.endsWith('_ug') ? 'µg' : 'mg');
-	const micL: Record<string, Loc> = {
-		potassium_mg: { en: 'Potassium', fi: 'Kalium', hu: 'Kálium', sv: 'Kalium' },
-		calcium_mg: { en: 'Calcium', fi: 'Kalsium', hu: 'Kalcium', sv: 'Kalcium' },
-		iron_mg: { en: 'Iron', fi: 'Rauta', hu: 'Vas', sv: 'Järn' },
-		magnesium_mg: { en: 'Magnesium', fi: 'Magnesium', hu: 'Magnézium', sv: 'Magnesium' },
-		zinc_mg: { en: 'Zinc', fi: 'Sinkki', hu: 'Cink', sv: 'Zink' },
-		vitamin_c_mg: { en: 'Vitamin C', fi: 'C-vitamiini', hu: 'C-vitamin', sv: 'C-vitamin' },
-		vitamin_d_ug: { en: 'Vitamin D', fi: 'D-vitamiini', hu: 'D-vitamin', sv: 'D-vitamin' },
-		vitamin_b12_ug: { en: 'Vitamin B12', fi: 'B12-vitamiini', hu: 'B12-vitamin', sv: 'B12-vitamin' },
-		folate_ug: { en: 'Folate', fi: 'Folaatti', hu: 'Folát', sv: 'Folat' }
-	};
+	const micL = MICRO_LABELS;
 	const micLim = $derived(microLimits(profile.age, profile.sex, profile.pregnant));
 	const wkMic = $derived(week ? weekMicros(week.days) : null);
 	const bandWord = (k: string) => {
@@ -163,9 +154,10 @@
 			<span class="mp-pill">{L(lbl.protein, lang)}: {nf(week.meta.proteinBand[0])}-{nf(week.meta.proteinBand[1])} g</span>
 			{#if mode === 'plan'}<span class="mp-pill">{week.days[0]?.meals.filter((m) => m.recipeId).length ?? 0} {L(lbl.meals, lang)}</span>{/if}
 			<span class="mp-pill">{L(lbl.water, lang)}: ~{fmt1(waterTargetMl / 1000)} l</span>
-			{#each week.meta.activeFilters.diet as f (f)}<span class="mp-pill">{f}</span>{/each}
-			{#if week.meta.activeFilters.alcoholFree}<span class="mp-pill">alcohol-free</span>{/if}
-			{#if week.meta.activeFilters.fodmap !== 'off'}<span class="mp-pill">FODMAP {week.meta.activeFilters.fodmap}</span>{/if}
+			<!-- Localized filter pills (audit M6: these used to print raw ids like "noRedMeat" in every language). -->
+			{#each week.meta.activeFilters.diet as f (f)}<span class="mp-pill">{L(DIET_LABELS[f] ?? { en: f, fi: f, hu: f, sv: f }, lang)}</span>{/each}
+			{#if week.meta.activeFilters.alcoholFree}<span class="mp-pill">{L(ALCOHOL_FREE_LABEL, lang)}</span>{/if}
+			{#if week.meta.activeFilters.fodmap !== 'off'}<span class="mp-pill">{L(FODMAP_LABELS[week.meta.activeFilters.fodmap] ?? { en: `FODMAP ${week.meta.activeFilters.fodmap}`, fi: `FODMAP ${week.meta.activeFilters.fodmap}`, hu: `FODMAP ${week.meta.activeFilters.fodmap}`, sv: `FODMAP ${week.meta.activeFilters.fodmap}` }, lang)}</span>{/if}
 			{#if profile.household.length}<span class="mp-pill">{L(lbl.household, lang)}: {profile.household.length + 1} {L(lbl.people, lang)}</span>{/if}
 		</div>
 
@@ -255,10 +247,11 @@
 	@media print {
 		.mp { display: block; color: #1b2024; font-size: 10pt; line-height: 1.4; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 		.mp-cover { display: flex; align-items: center; justify-content: space-between; gap: 12pt; border-bottom: 2pt solid var(--accent); padding-bottom: 7pt; margin-bottom: 10pt; }
-		.mp-logo { height: 30px; width: auto; }
+		/* Header mirrors PrintGuide (logo 34px, muted 8.5pt owner line) - one brand document family (audit M7). */
+		.mp-logo { height: 34px; width: auto; }
 		.mp-meta { text-align: right; }
 		.mp-title { font-size: 15pt; font-weight: 700; color: var(--primary); }
-		.mp-owner { font-size: 9pt; font-weight: 600; color: #1b2024; margin-top: 1pt; }
+		.mp-owner { font-size: 8.5pt; color: #5b6670; margin-top: 3pt; }
 		.mp-sub { font-size: 8.5pt; color: #5b6670; margin-top: 2pt; }
 		.mp-pills { display: flex; flex-wrap: wrap; gap: 4pt; margin-bottom: 8pt; }
 		.mp-pill { background: var(--accent-soft); color: var(--primary); border-radius: 9pt; padding: 1.5pt 6pt; font-size: 8.5pt; font-weight: 600; }

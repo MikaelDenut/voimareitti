@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addSaved, removeSaved, parseSaved, SAVED_CAP, type SavedPlan } from './saved-core';
+import { addSaved, removeSaved, parseSaved, isValidWeekPlanPayload, SAVED_CAP, type SavedPlan } from './saved-core';
 
 describe('saved-core', () => {
 	it('adds entries newest-first with a generated id', () => {
@@ -53,5 +53,20 @@ describe('saved-core', () => {
 	it('round-trips through JSON', () => {
 		const list = addSaved([], { name: 'Plan', payload: { a: [1, 2, 3] }, id: 'k', savedAt: 5 });
 		expect(parseSaved(JSON.stringify(list))).toEqual(list);
+	});
+
+	// 2026-07 audit M3: a corrupted / old-schema saved meal payload used to throw inside the snapshot
+	// render and take down the recipes page. The guard is structural: days array of meal arrays + meta.
+	it('isValidWeekPlanPayload accepts a WeekPlan shape and rejects corrupt payloads', () => {
+		const good = { days: [{ day: 1, meals: [], roundOut: [], totals: {} }], meta: { targetKcal: 2000 } };
+		expect(isValidWeekPlanPayload(good)).toBe(true);
+		expect(isValidWeekPlanPayload(null)).toBe(false);
+		expect(isValidWeekPlanPayload({})).toBe(false);
+		expect(isValidWeekPlanPayload({ days: [], meta: {} })).toBe(false);          // no days
+		expect(isValidWeekPlanPayload({ days: [{}], meta: {} })).toBe(false);        // day without meals
+		expect(isValidWeekPlanPayload({ days: [{ meals: [] }] })).toBe(false);       // missing meta
+		expect(isValidWeekPlanPayload({ days: 'x', meta: {} })).toBe(false);         // days not an array
+		// Additive future fields must not invalidate old saves (structural, not exhaustive).
+		expect(isValidWeekPlanPayload({ ...good, futureField: 1 })).toBe(true);
 	});
 });

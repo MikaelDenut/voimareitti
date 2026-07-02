@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { t, type Locale } from '$lib/i18n';
 	import Seo from '$lib/Seo.svelte';
 	import SiteHeader from '$lib/SiteHeader.svelte';
@@ -42,7 +43,9 @@
 			Object.assign(profile, viewing.payload); // old entry: regenerate from the saved profile, then re-save
 			try { localStorage.setItem('vr-generated', '1'); } catch { /* quota */ }
 		}
-		window.location.href = `/${lang}/generate`;
+		// goto (not window.location) keeps the SPA session + in-memory stores alive; the generate page's
+		// onMount consumes the handoff key exactly as before (2026-07 audit L3).
+		goto(`/${lang}/generate`);
 	}
 
 	// New, page-local labels (4-language). Consolidated into i18n.ts in the Phase 12 sweep.

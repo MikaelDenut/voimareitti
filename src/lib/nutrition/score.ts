@@ -18,7 +18,7 @@ import type { FullProfile } from '../profile-core';
 import type { EnergyResult } from '../engine/engine';
 import { recipes } from '../content/recipes';
 import { getIngredient } from '../content/ingredients';
-import { dayTotals, weekMicros, TRACKED_MICROS } from './day-totals';
+import { dayTotals, dayMicros, weekMicros, TRACKED_MICROS, type MicroKey } from './day-totals';
 import {
 	KCAL_TOLERANCE, SUBSTITUTE_PROTEIN_TOKENS, PROTEIN_VARIETY_CAP_PER_WEEK, SCORE_WEIGHTS
 } from './constants';
@@ -73,25 +73,44 @@ function dayAddOnCount(day: PlanDay): number {
 	return n;
 }
 
+// --- per-day computation cache (2026-07 audit M1) -------------------------------------------------------
+// dayTotals + dayMicros re-walk every ingredient of every meal; scoreWeek used to recompute them 4x per day
+// per CANDIDATE, and the optimizer scores ~60-70 candidates per iteration. Candidate weeks share 6 of 7 day
+// OBJECTS by reference (moves.cloneDay copies only the touched day), so a WeakMap keyed on the day object
+// makes every untouched day a cache hit across the whole optimizer run. The cache is created per
+// optimizeWeek call and passed in explicitly - inside one run day objects are never mutated in place
+// (every move clones), so the cache can never go stale. Callers that omit it get the original behavior.
+export type DayComputed = { totals: ReturnType<typeof dayTotals>; micros: Record<MicroKey, number> };
+export type ScoreCache = WeakMap<PlanDay, DayComputed>;
+export const createScoreCache = (): ScoreCache => new WeakMap();
+
+function computedFor(d: PlanDay, cache?: ScoreCache): DayComputed {
+	const hit = cache?.get(d);
+	if (hit) return hit;
+	const v: DayComputed = { totals: dayTotals(d), micros: dayMicros(d) };
+	cache?.set(d, v);
+	return v;
+}
+
 // --- tier raws (each a normalized, non-negative penalty; exported for unit tests) ----------------------
 
 /** Sum of per-day fractional distance OUTSIDE the band. 0 == every day inside the hard band. */
-export function bandExceedRaw(days: PlanDay[], target: number): number {
+export function bandExceedRaw(days: PlanDay[], target: number, cache?: ScoreCache): number {
 	if (target <= 0) return 0;
 	let s = 0;
 	for (const d of days) {
-		const delta = Math.abs(dayTotals(d).kcal - target) / target;
+		const delta = Math.abs(computedFor(d, cache).totals.kcal - target) / target;
 		if (delta > KCAL_TOLERANCE) s += delta - KCAL_TOLERANCE;
 	}
 	return s;
 }
 
 /** Soft centering inside the band: 0 at target, 1 per day at the band edge (squared). */
-export function calorieCenterRaw(days: PlanDay[], target: number): number {
+export function calorieCenterRaw(days: PlanDay[], target: number, cache?: ScoreCache): number {
 	if (target <= 0) return 0;
 	let s = 0;
 	for (const d of days) {
-		const delta = (dayTotals(d).kcal - target) / target;
+		const delta = (computedFor(d, cache).totals.kcal - target) / target;
 		const within = Math.max(-KCAL_TOLERANCE, Math.min(KCAL_TOLERANCE, delta)) / KCAL_TOLERANCE;
 		s += within * within;
 	}
@@ -99,11 +118,11 @@ export function calorieCenterRaw(days: PlanDay[], target: number): number {
 }
 
 /** Per-day protein shortfall below the floor (age-aware), as a fraction of the floor. */
-export function proteinShortRaw(days: PlanDay[], floor: number): number {
+export function proteinShortRaw(days: PlanDay[], floor: number, cache?: ScoreCache): number {
 	if (floor <= 0) return 0;
 	let s = 0;
 	for (const d of days) {
-		const p = dayTotals(d).protein;
+		const p = computedFor(d, cache).totals.protein;
 		if (p < floor) s += (floor - p) / floor;
 	}
 	return s;
@@ -113,8 +132,19 @@ export function proteinShortRaw(days: PlanDay[], floor: number): number {
  *  household scale (planning/56 HH4): the aggregate weekMicros feed `scale` adult-equivalents, so BOTH the
  *  target and the UL scale with it - otherwise a household's aggregate looks like a huge surplus over one
  *  person's target (no repair) AND a huge breach of one person's UL (bogus excess). Solo: scale = 1. */
-export function microRaw(days: PlanDay[], targets: EnergyResult['microTargets'], scale = 1): { short: number; excess: number } {
-	const wk = weekMicros(days);
+export function microRaw(days: PlanDay[], targets: EnergyResult['microTargets'], scale = 1, cache?: ScoreCache): { short: number; excess: number } {
+	// weekMicros = sum of dayMicros; with a cache we sum the cached per-day micros instead of re-walking.
+	let wk: Record<MicroKey, number>;
+	if (cache) {
+		wk = Object.fromEntries(TRACKED_MICROS.map((k) => [k, 0])) as Record<MicroKey, number>;
+		for (const d of days) {
+			const dm = computedFor(d, cache).micros;
+			for (const k of TRACKED_MICROS) wk[k] += dm[k] ?? 0;
+		}
+		for (const k of TRACKED_MICROS) wk[k] = Math.round(wk[k] * 10) / 10; // mirror weekMicros' rounding
+	} else {
+		wk = weekMicros(days);
+	}
 	let short = 0, excess = 0;
 	for (const k of TRACKED_MICROS) {
 		const t7 = targets[k] * 7 * scale;
@@ -131,10 +161,10 @@ export function microRaw(days: PlanDay[], targets: EnergyResult['microTargets'],
 
 /** Macro penalties: carbs over the ceiling, fat distance from target, fibre under target. Targets are passed
  *  in (household-scaled by the caller) so this stays a pure function of explicit numbers. */
-export function macroRaw(days: PlanDay[], carbCeilingG: number | null, fatG: number, fiberG: number): { carb: number; fat: number; fibre: number } {
+export function macroRaw(days: PlanDay[], carbCeilingG: number | null, fatG: number, fiberG: number, cache?: ScoreCache): { carb: number; fat: number; fibre: number } {
 	let carb = 0, fat = 0, fibre = 0;
 	for (const d of days) {
-		const t = dayTotals(d);
+		const t = computedFor(d, cache).totals;
 		if (carbCeilingG != null && carbCeilingG > 0 && t.carbs > carbCeilingG) carb += (t.carbs - carbCeilingG) / carbCeilingG;
 		if (fatG > 0) fat += Math.abs(t.fat - fatG) / fatG;
 		if (fiberG > 0 && t.fiber < fiberG) fibre += (fiberG - t.fiber) / fiberG;
@@ -183,7 +213,7 @@ export interface ScoreResult {
  * Score a whole week. Pure; mutates nothing. `inBand` is the hard-band flag; `total` is the soft quality
  * (dominated by the band term whenever a day is out of band, so the optimizer always repairs the band first).
  */
-export function scoreWeek(week: WeekPlan, profile: FullProfile, energy: EnergyResult): ScoreResult {
+export function scoreWeek(week: WeekPlan, profile: FullProfile, energy: EnergyResult, cache?: ScoreCache): ScoreResult {
 	const W = SCORE_WEIGHTS;
 	const days = week.days;
 	// Household-aware targets: planWeek scales each day's servings to feed the whole household and records the
@@ -194,11 +224,11 @@ export function scoreWeek(week: WeekPlan, profile: FullProfile, energy: EnergyRe
 	const scale = week.meta.householdScale || 1;
 	const target = week.meta.targetKcal || energy.target;
 
-	const bandR = bandExceedRaw(days, target);
-	const calR = calorieCenterRaw(days, target);
-	const protR = proteinShortRaw(days, energy.proteinBand[0] * scale);
-	const mic = microRaw(days, energy.microTargets, scale);
-	const mac = macroRaw(days, energy.carbCeilingG != null ? energy.carbCeilingG * scale : null, energy.fatG * scale, energy.fiberG * scale);
+	const bandR = bandExceedRaw(days, target, cache);
+	const calR = calorieCenterRaw(days, target, cache);
+	const protR = proteinShortRaw(days, energy.proteinBand[0] * scale, cache);
+	const mic = microRaw(days, energy.microTargets, scale, cache);
+	const mac = macroRaw(days, energy.carbCeilingG != null ? energy.carbCeilingG * scale : null, energy.fatG * scale, energy.fiberG * scale, cache);
 	const v = varietyRaw(week, profile);
 
 	const band = W.bandExceed * bandR;

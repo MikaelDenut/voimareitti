@@ -107,6 +107,7 @@
 		medium: { en: 'Medium', fi: 'Keskitaso', hu: 'Közepes', sv: 'Medel' },
 		hard: { en: 'Hard', fi: 'Vaativa', hu: 'Nehéz', sv: 'Svår' },
 		print: { en: 'Print', fi: 'Tulosta', hu: 'Nyomtatás', sv: 'Skriv ut' },
+		planMeals: { en: 'Plan meals', fi: 'Suunnittele ateriat', hu: 'Étrend tervezése', sv: 'Planera måltider' },
 		swap: { en: 'Swap ingredient', fi: 'Vaihda raaka-aine', hu: 'Hozzávaló cseréje', sv: 'Byt ingrediens' },
 		remove: { en: 'Remove', fi: 'Poista', hu: 'Eltávolítás', sv: 'Ta bort' },
 		noAlt: { en: 'No suitable alternative', fi: 'Ei sopivaa vaihtoehtoa', hu: 'Nincs megfelelő alternatíva', sv: 'Inget passande alternativ' },
@@ -140,7 +141,8 @@
 		// avoided foods, and step the per-origin index. No re-base, no immediate repeat (planning/43 E).
 		const anchor = ings[i].origId;
 		const others = ings.filter((_, j) => j !== i).map((x) => x.origId);
-		const opts = ingredientSwapOptions(anchor, others, profile.dislikedIngredientIds);
+		// profile passed so every offered swap respects diet/allergen/FODMAP settings (2026-07 audit C1)
+		const opts = ingredientSwapOptions(anchor, others, profile.dislikedIngredientIds, profile);
 		if (!opts.length) return;
 		const next = (swapState[anchor] ?? -1) + 1;
 		swapState = { ...swapState, [anchor]: next };
@@ -153,7 +155,7 @@
 		ings[i] = { ...ings[i], ingredientId: toId, grams, preparation: undefined };
 	}
 	function hasSwap(i: number) {
-		return ingredientSwapOptions(ings[i].origId, ings.filter((_, j) => j !== i).map((x) => x.origId), profile.dislikedIngredientIds).length > 0;
+		return ingredientSwapOptions(ings[i].origId, ings.filter((_, j) => j !== i).map((x) => x.origId), profile.dislikedIngredientIds, profile).length > 0;
 	}
 	function remove(i: number) {
 		if (ings.length <= 1) return;
@@ -227,6 +229,8 @@
 		<div class="quick">
 			<div><b>{r.prepMinutes + r.cookMinutes}</b> {L(lbl.min, lang)}</div>
 			<div>{diffName(r.difficulty)}</div>
+			<!-- Funnel CTA mirroring the exercise detail's "Use in program" (2026-07 parity audit M12). -->
+			<a class="go no-print" href={`/${lang}/nutrition`}>{L(lbl.planMeals, lang)}</a>
 			<button type="button" class="printbtn no-print" onclick={() => window.print()}>{L(lbl.print, lang)}</button>
 		</div>
 	</div>
@@ -365,7 +369,12 @@
 	.hero { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
 	.hero :global(.heroimg) { width: min(320px, 100%); aspect-ratio: 4/3; object-fit: cover; border-radius: var(--radius); background: var(--accent-soft); }
 	.quick { display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.9rem; }
-	.printbtn { font: inherit; font-weight: 600; color: var(--primary); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 0.4rem 0.9rem; min-height: 44px; cursor: pointer; }
+	/* Ghost-style print button (matches the result pages' action buttons; was a 999px pill - audit M8)
+	   + the accent funnel CTA mirroring the exercise detail's "Use in program" (audit M12). */
+	.printbtn { font: inherit; font-weight: 600; color: var(--primary); background: var(--surface); border: 1px solid var(--line); border-radius: 0.6rem; padding: 0.5rem 1rem; min-height: 44px; cursor: pointer; display: inline-flex; align-items: center; }
+	.printbtn:hover { border-color: var(--accent); }
+	.go { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0.5rem 1rem; background: var(--accent); color: #fff; border-radius: 0.6rem; font-weight: 700; text-decoration: none; }
+	.go:hover { filter: brightness(1.05); }
 	.servings { display: flex; align-items: center; gap: 0.6rem; margin: 0 0 1rem; font-size: 0.9rem; }
 	.servings button { width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 0.5rem; background: var(--surface); font-size: 1.2rem; cursor: pointer; }
 	.servings output { min-width: 1.5rem; text-align: center; font-weight: 600; }
@@ -392,10 +401,17 @@
 	.igrams { color: var(--accent); font-weight: 600; font-size: 0.9rem; }
 	.iprep { font-size: 0.82rem; }
 	.iactions { margin-left: auto; display: inline-flex; gap: 0.3rem; }
-	.iswap, .iremove { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--primary); cursor: pointer; }
-	.iswap:hover, .iremove:hover { border-color: var(--accent); }
+	/* Design Parity Contract: square action icons (swap = accent, delete = muted with red hover), never
+	   round bubbles (2026-07 parity audit H1). Kept at 32px here (denser rows), 2.4rem on mobile below. */
+	.iswap, .iremove { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 0.4rem; background: var(--surface); cursor: pointer; }
+	.iswap { color: var(--accent); }
+	.iswap:hover { border-color: var(--accent); background: var(--accent-soft); }
 	.iswap:disabled { opacity: 0.35; cursor: default; }
 	.iremove { font-size: 1.1rem; line-height: 1; color: var(--muted); }
+	.iremove:hover { background: #fdecec; border-color: #d98b8b; color: #9a4a13; }
+	@media (max-width: 760px) {
+		.iswap, .iremove { width: 2.4rem; height: 2.4rem; }
+	}
 	.steps { padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.5rem; }
 
 	/* Nutrition-facts label (shop-style) */

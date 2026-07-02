@@ -26,7 +26,8 @@ import {
 import { profiles } from '$lib/content/profiles';
 import { prenatalImages } from '$lib/content/exercise-images';
 import {
-	CARB_PHASE, CARB_CEILING_GPERKG, proteinFloorPerKg, microTargetsFor, type MicroTargets
+	CARB_PHASE, CARB_CEILING_GPERKG, proteinFloorPerKg, microTargetsFor, KCAL_TOLERANCE,
+	type MicroTargets
 } from '$lib/nutrition/constants';
 
 export interface Profile {
@@ -363,15 +364,29 @@ export function estimateEnergy(p: Profile): EnergyResult {
 	if (p.fatOverride && p.fatOverride > 0) { effFatG = Math.max(0, round(p.fatOverride)); overridden.fat = true; }
 	if (p.waterOverride && p.waterOverride > 0) { waterTargetMl = Math.max(0, round(p.waterOverride)); overridden.water = true; }
 
+	// An override changes the energy/macro picture, so every NON-overridden target derived from the old
+	// automatic values must be recomputed from the effective ones (2026-07 audit M-A). Otherwise a kcal
+	// override of e.g. 1800 still reports fat/carb/fibre targets that sum to the old ~3000 kcal, the
+	// overview shows impossible numbers, and the scorer chases them. Order: protein -> fat -> carb.
+	// Only fires when an override is set, so all frozen fixtures (no overrides) stay byte-identical.
+	let effFiberG = fiberG;
+	if (overridden.kcal && !overridden.fat) {
+		effFatG = Math.max(round((effTarget * 0.25) / 9), round(p.weightKg * 0.6));
+	}
+	if ((overridden.kcal || overridden.protein || overridden.fat) && !overridden.carb) {
+		effCarbG = Math.max(0, round((effTarget - effProteinHigh * 4 - effFatG * 9) / 4));
+	}
+	if (overridden.kcal) effFiberG = round((effTarget / 1000) * 14);
+
 	// Cross-field feasibility (custom-target hard block, planning/53 T1 + planning/54). The calories the plan
 	// CANNOT avoid are the protein floor (always enforced) plus any EXPLICITLY pinned fat/carb override (the
 	// user fixed those amounts; non-overridden fat/carb stay flexible and do not count). If those mandatory
-	// macros need more than the calorie target (same 5% slack as the plan's kcal band), the targets are
-	// physically impossible - flag it so the UI blocks generation. Only ever fires on a bad override combo.
+	// macros need more than the calorie target (same slack as the plan's kcal band, KCAL_TOLERANCE), the
+	// targets are physically impossible - flag it so the UI blocks generation. Only fires on a bad override combo.
 	let targetConflict: EnergyResult['targetConflict'];
 	if (overridden.kcal || overridden.protein || overridden.carb || overridden.fat) {
 		const requiredKcal = effProteinBand[0] * 4 + (overridden.fat ? effFatG * 9 : 0) + (overridden.carb ? effCarbG * 4 : 0);
-		if (requiredKcal > effTarget * 1.05) {
+		if (requiredKcal > effTarget * (1 + KCAL_TOLERANCE)) {
 			targetConflict = {
 				requiredKcal: round(requiredKcal), targetKcal: round(effTarget),
 				proteinG: effProteinBand[0], fatG: effFatG, carbG: effCarbG
@@ -382,7 +397,7 @@ export function estimateEnergy(p: Profile): EnergyResult {
 	return {
 		bmr: round(bmr), tdee: round(tdee), target: round(effTarget),
 		proteinLow: effProteinLow, proteinHigh: effProteinHigh, fatG: effFatG, carbG: effCarbG,
-		fiberG, waterMl, nutritionAdjusted,
+		fiberG: effFiberG, waterMl, nutritionAdjusted,
 		proteinBand: effProteinBand, carbCeilingG, microTargets, waterTargetMl, overridden, targetConflict
 	};
 }
@@ -695,6 +710,34 @@ export function swapOptions(p: Profile, current: Exercise, excludeIds: string[],
 			(easierFirst ? expRank(a.experienceMin) - expRank(b.experienceMin) : 0) ||
 			b.fit[key] - a.fit[key] || eff(b.id) - eff(a.id) || a.id.localeCompare(b.id)
 		);
+}
+
+/** Reachable exercises for refilling an EMPTY session (2026-07 parity audit H3): the session's own
+ *  movement patterns first (blueprint order), then their fallback patterns. Before this, a user who
+ *  removed every exercise from a day had NO way to refill it short of regenerating (losing every other
+ *  manual edit) - the add control needed a reference item that no longer existed. Additive helper only;
+ *  buildProgram never calls it, so every frozen fixture is untouched. */
+export function sessionFillOptions(p: Profile, titleKey: SessionKey, excludeIds: string[] = []): Exercise[] {
+	const patMap: Record<string, readonly string[]> = {
+		session: PAT.full, upper: PAT.upper, lower: PAT.lower, push: PAT.push, pull: PAT.pull, legs: PAT.legs
+	};
+	const base = patMap[titleKey] ?? PAT.full;
+	const pats: string[] = [];
+	for (const pat of base) if (!pats.includes(pat)) pats.push(pat);
+	for (const pat of base) for (const fb of FALLBACK_PATTERNS[pat] ?? []) if (!pats.includes(fb)) pats.push(fb);
+	const key = fitKey(p.trainingGoal);
+	const out: Exercise[] = [];
+	for (const pat of pats) {
+		const cands = exercises
+			.filter((e) =>
+				e.pattern === pat && hasEquipment(p, e.id) && suitable(p, e.id) &&
+				expRank(e.experienceMin) <= expRank(p.experience) && !prenatalUnsafe(p, e) &&
+				!excludeIds.includes(e.id) && !out.some((x) => x.id === e.id)
+			)
+			.sort((a, b) => b.fit[key] - a.fit[key] || eff(b.id) - eff(a.id) || a.id.localeCompare(b.id));
+		out.push(...cands);
+	}
+	return out;
 }
 
 // Heuristic for biasing toward easier variations: explicit opt-in, beginners, female users (on average

@@ -18,6 +18,7 @@ import { ingredientAllowed } from '../recipe-filters';
 import { dayTotals, weekMicros, kcalMatchedServings } from './day-totals';
 import { eligibleRecipes, isOmnivoreProfile, SUBSTITUTE_RECIPE_IDS } from '../engine/meal-planner';
 import { OPTIMIZER, SUPPLEMENTABLE_MICROS, householdServingCap } from './constants';
+import { MICRO_UL } from './micro-limits';
 
 export interface Move { kind: string; week: WeekPlan; }
 
@@ -81,10 +82,14 @@ function trimLargestDish(day: PlanDay): boolean {
 	return true;
 }
 
-function hasSupplement(week: WeekPlan, micro: string): boolean {
-	for (const d of week.days) for (const m of d.meals) for (const a of m.additions ?? [])
-		if (a.kind === 'supplement' && a.micro === micro) return true;
-	return false;
+/** True only when EVERY day already carries a supplement line for the micro (i.e. the optimizer's own
+ *  week-wide line exists). A manual single-day line no longer suppresses week-wide repair for the other
+ *  six days (2026-07 audit L1) - the weekly-gap check governs adequacy; this guard only prevents the
+ *  optimizer stacking duplicate week-wide lines. */
+function hasWeekWideSupplement(week: WeekPlan, micro: string): boolean {
+	return week.days.every((d) =>
+		d.meals.some((m) => (m.additions ?? []).some((a) => a.kind === 'supplement' && a.micro === micro))
+	);
 }
 
 function tidyDose(amount: number): number {
@@ -125,10 +130,14 @@ export function generateMoves(week: WeekPlan, profile: FullProfile, energy: Ener
 		if (k === 'iron_mg' && profile.preferIronFromFood) continue;
 		const t7 = energy.microTargets[k] * 7 * hhScale; // household-scaled weekly target (planning/56 HH4)
 		if (t7 <= 0 || wk[k] >= t7 * OPTIMIZER.microCloseEnough) continue;
-		if (hasSupplement(week, k)) continue;
+		if (hasWeekWideSupplement(week, k)) continue;
 		// Dose only the WEEKLY GAP, spread per day, so the week lands near 100% of target - NOT the ~190%
 		// the old full-RDA-per-day dosing produced (which could also exceed a micro's supplemental UL).
-		const perDay = tidyDose((t7 - wk[k]) / 7);
+		// Safety cap (2026-07 audit M-D): the per-ADULT-EQUIVALENT daily dose never exceeds the micro's UL
+		// (the household line is an aggregate; each person's share must stay under the UL regardless of gap).
+		let perDay = tidyDose((t7 - wk[k]) / 7);
+		const ul = MICRO_UL[k];
+		if (ul != null && perDay > ul * hhScale) perDay = tidyDose(ul * hhScale);
 		if (perDay <= 0) continue;
 		const w = clone(week);
 		for (const day of w.days) day.meals.push({
@@ -194,7 +203,9 @@ export function generateSwaps(week: WeekPlan, profile: FullProfile, eligible: re
 				const nm = w.days[di].meals[mi];
 				nm.recipeId = cand.id;
 				nm.ingredientEdits = undefined; // edits belonged to the old recipe
-				setServings(nm, cand, kcalMatchedServings(m.kcal, cand.nutritionPerServing.energy_kcal));
+				// Household-aware serving cap (audit H3): without it every >3-serving household dish could
+				// only swap DOWN to 3 servings, so the scorer rejected all swaps and the neighbourhood was dead.
+				setServings(nm, cand, kcalMatchedServings(m.kcal, cand.nutritionPerServing.energy_kcal, householdServingCap(week.meta.householdScale)));
 				moves.push({ kind: `swap:${di}:${mi}:${cand.id}`, week: w });
 			}
 		}

@@ -122,7 +122,8 @@
 	function swapLine(lineId: string) {
 		if (!list) return;
 		const others = list.lines.map((l) => l.ingredientId).filter((x) => x !== lineId);
-		const opts = ingredientSwapOptions(lineId, others, profile.dislikedIngredientIds);
+		// profile passed so every offered swap respects diet/allergen/FODMAP settings (2026-07 audit C1)
+		const opts = ingredientSwapOptions(lineId, others, profile.dislikedIngredientIds, profile);
 		if (!opts.length) return;
 		// Cycle through alternatives on repeated clicks (no immediate repeat); avoided foods are excluded.
 		const next = (subIdx[lineId] ?? -1) + 1;
@@ -131,7 +132,7 @@
 	}
 	function canSwapLine(lineId: string): boolean {
 		if (!list) return false;
-		return ingredientSwapOptions(lineId, list.lines.map((l) => l.ingredientId).filter((x) => x !== lineId), profile.dislikedIngredientIds).length > 0;
+		return ingredientSwapOptions(lineId, list.lines.map((l) => l.ingredientId).filter((x) => x !== lineId), profile.dislikedIngredientIds, profile).length > 0;
 	}
 
 	onMount(() => {
@@ -223,8 +224,11 @@
 	ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.3rem; }
 	li { display: flex; align-items: center; gap: 0.4rem; }
 	.row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.7rem; min-height: 52px; padding: 0.4rem 0.6rem; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); font: inherit; color: var(--text); text-align: left; cursor: pointer; }
-	.lineswap { flex: none; width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--primary); cursor: pointer; }
-	.lineswap:hover { border-color: var(--accent); }
+	/* Design Parity Contract: square swap icon in the shared spec (accent color, 0.4rem radius) -
+	   the old 999px bubble was an explicit contract violation (2026-07 parity audit H1). Kept at the
+	   list's 40px touch size (>= the contract's mobile 2.4rem). */
+	.lineswap { flex: none; width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 0.4rem; background: var(--surface); color: var(--accent); cursor: pointer; }
+	.lineswap:hover { border-color: var(--accent); background: var(--accent-soft); }
 	.row:hover { border-color: var(--accent); }
 	.box { width: 26px; height: 26px; flex: none; border: 2px solid var(--accent); border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; color: var(--accent); font-weight: 700; }
 	.row :global(.iimg) { width: 40px; height: 40px; object-fit: contain; border-radius: 0.4rem; flex: none; background: transparent; }

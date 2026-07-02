@@ -206,12 +206,16 @@ export function dayCalorieStatus(dayKcal: number, targetKcal: number): { state: 
 	return { state: 'ok', deltaPct: delta };
 }
 
-/** Servings of a new dish that best match the original dish's calories, snapped to 0.5 and clamped [0.5,3]. */
-export function kcalMatchedServings(origKcal: number, perServingKcal: number): number {
+/** Servings of a new dish that best match the original dish's calories, snapped to 0.5 and clamped
+ *  [0.5, maxServings]. The default cap 3 is the original SOLO design; household call sites MUST pass
+ *  householdServingCap(scale) or a household dish swap silently drops most of the day's calories
+ *  (2026-07 audit H3: a 12-serving household dinner used to swap down to a 3-serving dish). */
+export function kcalMatchedServings(origKcal: number, perServingKcal: number, maxServings = 3): number {
 	if (!perServingKcal || perServingKcal <= 0) return 1;
+	const cap = Math.max(0.5, Math.floor(maxServings * 2) / 2); // cap itself on the 0.5 grid (e.g. 24.8 -> 24.5)
 	const raw = origKcal / perServingKcal;
 	const snapped = Math.round(raw * 2) / 2;
-	return Math.max(0.5, Math.min(3, snapped || 0.5));
+	return Math.max(0.5, Math.min(cap, snapped || 0.5));
 }
 
 /** Grams of a swapped ingredient that best match the original's calories, snapped to a neat step. */

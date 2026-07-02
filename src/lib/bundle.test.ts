@@ -32,4 +32,20 @@ describe('bundle budget: light pages do not import the food system', () => {
 			}
 		});
 	}
+
+	// 2026-07 audit H2: the grep above only sees the page file's OWN source, so a shared component can
+	// smuggle a heavy module into a light page transitively. ProfilePanel (on every light page) did exactly
+	// that with a static ingredient-DB import (~428 KB source). Guard the components the light pages embed:
+	// only a type-only or dynamic import() of the ingredient DB is allowed there.
+	const SHARED_ON_LIGHT_PAGES = ['src/lib/ProfilePanel.svelte'];
+	for (const comp of SHARED_ON_LIGHT_PAGES) {
+		it(`${comp} has no STATIC value import of the ingredient DB (lazy/type-only allowed)`, () => {
+			if (!existsSync(comp)) return;
+			const src = readFileSync(comp, 'utf-8');
+			// Every `import ... from '$lib/content/ingredients'` line must be `import type`.
+			const staticImports = src.match(/^\s*import\s[^;]*from\s+['"]\$lib\/content\/ingredients['"]/gm) ?? [];
+			const valueImports = staticImports.filter((l) => !/^\s*import\s+type\b/.test(l));
+			expect(valueImports, `${comp} statically imports the ingredient DB: ${valueImports.join(' | ')}`).toEqual([]);
+		});
+	}
 });

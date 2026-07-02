@@ -18,6 +18,7 @@
 	import { householdAmount, householdBuyAmount, UNIT_LABELS } from '$lib/nutrition/household-units';
 	import { shoppingList, formatQuantity, shopUnit, type Aisle } from '$lib/shopping';
 	import { profile } from '$lib/profile.svelte';
+	import { DAY_NAMES, MICRO_LABELS, MICROS_HEADING, microUnit, microImg } from '$lib/nutrition-labels';
 
 	let { week, lang, onBack, onUse }: {
 		week: WeekPlan; lang: Locale; onBack: () => void; onUse: () => void;
@@ -31,12 +32,8 @@
 	let showShop = $state(false);
 	let checked = $state<Record<string, boolean>>({});
 
-	const dayNames: Loc[] = [
-		{ en: 'Mon', fi: 'Ma', hu: 'Hét', sv: 'Mån' }, { en: 'Tue', fi: 'Ti', hu: 'Kedd', sv: 'Tis' },
-		{ en: 'Wed', fi: 'Ke', hu: 'Sze', sv: 'Ons' }, { en: 'Thu', fi: 'To', hu: 'Csüt', sv: 'Tor' },
-		{ en: 'Fri', fi: 'Pe', hu: 'Pén', sv: 'Fre' }, { en: 'Sat', fi: 'La', hu: 'Szo', sv: 'Lör' },
-		{ en: 'Sun', fi: 'Su', hu: 'Vas', sv: 'Sön' }
-	];
+	// Shared label maps (nutrition-labels.ts) - one source across planner / snapshot / PDF (audit M5).
+	const dayNames = DAY_NAMES;
 	const lbl: Record<string, Loc> = {
 		back: { en: 'Back', fi: 'Takaisin', hu: 'Vissza', sv: 'Tillbaka' },
 		use: { en: 'Use as my plan', fi: 'Käytä suunnitelmanani', hu: 'Beállítom tervemnek', sv: 'Använd som min plan' },
@@ -47,12 +44,12 @@
 		servings: { en: 'servings', fi: 'annosta', hu: 'adag', sv: 'portioner' },
 		dayTotal: { en: 'Day total', fi: 'Päivän yhteensä', hu: 'Napi összesen', sv: 'Dagens totalt' },
 		target: { en: 'Target', fi: 'Tavoite', hu: 'Cél', sv: 'Mål' },
-		dayFacts: { en: 'Day nutrition facts', fi: 'Päivän ravintosisältö', hu: 'Napi tápérték', sv: 'Dagens näringsvärde' },
-		factsHead: { en: 'Nutrition facts', fi: 'Ravintosisältö', hu: 'Tápérték', sv: 'Näringsvärde' },
-		micros: { en: 'Micronutrients', fi: 'Hivenaineet', hu: 'Mikrotápanyagok', sv: 'Mikronäring' },
+		dayFacts: { en: 'Day nutrition facts', fi: 'Päivän ravintosisältö', hu: 'Napi tápérték', sv: 'Dagens näringsvärden' },
+		factsHead: { en: 'Nutrition facts', fi: 'Ravintosisältö', hu: 'Tápértékek', sv: 'Näringsvärden' },
+		micros: MICROS_HEADING,
 		energy: { en: 'Energy', fi: 'Energia', hu: 'Energia', sv: 'Energi' },
 		lfFat: { en: 'Fat', fi: 'Rasva', hu: 'Zsír', sv: 'Fett' },
-		lfCarbs: { en: 'Carbs', fi: 'Hiilihydraatit', hu: 'Szénhidrát', sv: 'Kolhydrater' },
+		lfCarbs: { en: 'Carbohydrate', fi: 'Hiilihydraatti', hu: 'Szénhidrát', sv: 'Kolhydrater' },
 		sugars: { en: 'of which sugars', fi: 'josta sokereita', hu: 'amelyből cukrok', sv: 'varav sockerarter' },
 		lfFibre: { en: 'Fibre', fi: 'Kuitu', hu: 'Rost', sv: 'Fiber' },
 		lfProtein: { en: 'Protein', fi: 'Proteiini', hu: 'Fehérje', sv: 'Protein' },
@@ -66,19 +63,11 @@
 		calOver: { en: 'This is over your set calorie target.', fi: 'Tämä ylittää asettamasi kaloritavoitteen.', hu: 'Ez meghaladja a beállított kalóriacélodat.', sv: 'Detta överstiger ditt inställda kalorimål.' },
 		tooLow: { en: 'too low', fi: 'liian vähän', hu: 'túl kevés', sv: 'för lågt' },
 		tooHigh: { en: 'too high', fi: 'liikaa', hu: 'túl sok', sv: 'för högt' },
+		weekAbbr: { en: 'wk', fi: 'vko', hu: 'hét', sv: 'v' },
+		dayWeekHint: { en: 'Big number = today. wk% = whole week vs target (the colour follows the week).', fi: 'Iso luku = tänään. vko% = koko viikko vs tavoite (väri seuraa viikkoa).', hu: 'A nagy szám = ma. hét% = az egész hét a célhoz képest (a szín a hetet követi).', sv: 'Stora siffran = idag. v% = hela veckan mot mål (färgen följer veckan).' },
 		got: { en: 'Got it', fi: 'Hankittu', hu: 'Megvan', sv: 'Klart' }
 	};
-	const micL: Record<string, Loc> = {
-		potassium_mg: { en: 'Potassium', fi: 'Kalium', hu: 'Kálium', sv: 'Kalium' },
-		calcium_mg: { en: 'Calcium', fi: 'Kalsium', hu: 'Kalcium', sv: 'Kalcium' },
-		iron_mg: { en: 'Iron', fi: 'Rauta', hu: 'Vas', sv: 'Järn' },
-		magnesium_mg: { en: 'Magnesium', fi: 'Magnesium', hu: 'Magnézium', sv: 'Magnesium' },
-		zinc_mg: { en: 'Zinc', fi: 'Sinkki', hu: 'Cink', sv: 'Zink' },
-		vitamin_c_mg: { en: 'Vitamin C', fi: 'C-vitamiini', hu: 'C-vitamin', sv: 'C-vitamin' },
-		vitamin_d_ug: { en: 'Vitamin D', fi: 'D-vitamiini', hu: 'D-vitamin', sv: 'D-vitamin' },
-		vitamin_b12_ug: { en: 'Vitamin B12', fi: 'B12-vitamiini', hu: 'B12-vitamin', sv: 'B12-vitamin' },
-		folate_ug: { en: 'Folate', fi: 'Folaatti', hu: 'Folát', sv: 'Folat' }
-	};
+	const micL = MICRO_LABELS; // shared (nutrition-labels.ts, audit M5)
 	const aisleName: Record<Aisle, Loc> = {
 		produce: { en: 'Produce', fi: 'Hedelmät ja vihannekset', hu: 'Zöldség-gyümölcs', sv: 'Frukt och grönt' },
 		'meat-fish-protein': { en: 'Meat, fish & protein', fi: 'Liha, kala ja proteiini', hu: 'Hús, hal, fehérje', sv: 'Kött, fisk och protein' },
@@ -89,12 +78,6 @@
 		other: { en: 'Other', fi: 'Muut', hu: 'Egyéb', sv: 'Övrigt' }
 	};
 	const MIC = TRACKED_MICROS;
-	const MICRO_IMG: Record<string, string> = {
-		potassium_mg: 'potassium', calcium_mg: 'calcium', iron_mg: 'iron', magnesium_mg: 'magnesium',
-		zinc_mg: 'zinc', vitamin_c_mg: 'vitamin-c', vitamin_d_ug: 'vitamin-d', vitamin_b12_ug: 'vitamin-b12', folate_ug: 'folate'
-	};
-	const microUnit = (k: string) => (k.endsWith('_ug') ? 'µg' : 'mg');
-	const microImg = (k: string) => `/img/supplements/${MICRO_IMG[k] ?? 'vitamin-d'}.webp`;
 
 	const microLim = $derived(microLimits(profile.age, profile.sex, !!profile.pregnant));
 	const wkMicros = $derived(weekMicros(week.days));
@@ -333,7 +316,10 @@
 					<div class="micgrid">
 						{#each MIC as k (k)}
 							{@const band = microBandOf(k)}
-							<div class="miccell band-{band}"><b>{fmt1(dmic[k])} {microUnit(k)}</b><span>{L(micL[k], lang)}</span>{#if band === 'low-bad'}<span class="micflag">{L(lbl.tooLow, lang)}</span>{:else if band === 'high-bad'}<span class="micflag">{L(lbl.tooHigh, lang)}</span>{/if}</div>
+							{@const wkPct = microLim.target[k] > 0 ? Math.round((wkMicros[k] / (microLim.target[k] * 7)) * 100) : 0}
+							<!-- Day value + weekly % context, mirroring the planner (2026-07 parity audit M11):
+							     the flag colour follows the WEEK, so a single low day is not misread as alarming. -->
+							<div class="miccell band-{band}" title={L(lbl.dayWeekHint, lang)}><b>{fmt1(dmic[k])} {microUnit(k)}</b><span>{L(micL[k], lang)}</span><span class="micweek">{L(lbl.weekAbbr, lang)} {wkPct}%</span>{#if band === 'low-bad'}<span class="micflag">{L(lbl.tooLow, lang)}</span>{:else if band === 'high-bad'}<span class="micflag">{L(lbl.tooHigh, lang)}</span>{/if}</div>
 						{/each}
 					</div>
 				</details>
@@ -380,17 +366,20 @@
 	.addtag { font-size: 0.68rem; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 0 0.4rem; }
 	.igrams { margin-left: auto; color: var(--muted); font-size: 0.85rem; }
 	.steps { margin: 0.3rem 0 0; padding-left: 1.2rem; font-size: 0.88rem; display: flex; flex-direction: column; gap: 0.2rem; }
+	/* FDA-style facts label + alert colors: EXACT copies of the planner's canonical styles (2026-07
+	   parity audit M3/M4 - the snapshot had drifted into its own variant). */
 	.facts-wrap { margin-top: 0.6rem; }
-	.facts { max-width: 320px; border: 2px solid var(--text); border-radius: 0.4rem; padding: 0.5rem 0.7rem; background: var(--bg); }
-	.facts-head { font-size: 1.1rem; font-weight: 800; border-bottom: 6px solid var(--text); padding-bottom: 0.2rem; margin-bottom: 0.2rem; }
-	.facts-head.sub-head { font-size: 0.85rem; font-weight: 700; border-bottom-width: 2px; }
-	.facts-row { display: flex; justify-content: space-between; gap: 0.5rem; border-bottom: 1px solid var(--line); padding: 0.12rem 0; font-size: 0.85rem; }
-	.facts-row.big { font-weight: 700; }
-	.facts-row.sub { padding-left: 1rem; font-weight: 400; font-size: 0.8rem; }
-	.facts-divider { height: 0.4rem; }
-	.calnote { border-radius: var(--radius); padding: 0.5rem 0.8rem; font-size: 0.9rem; font-weight: 700; margin: 0; }
-	.calnote.low { background: #fff4d6; color: #7a5a00; }
-	.calnote.over { background: #fdecec; color: #9a2c2c; }
+	.facts { border: 1.5px solid var(--text); border-radius: 6px; padding: 0.6rem 0.8rem; max-width: 360px; background: var(--surface); }
+	.facts-head { font-size: 1.05rem; font-weight: 800; border-bottom: 4px solid var(--text); padding-bottom: 0.3rem; }
+	.facts-head.sub-head { font-size: 0.85rem; margin-top: 0.6rem; border-bottom-width: 2px; }
+	.facts-row { display: flex; justify-content: space-between; gap: 1rem; padding: 0.28rem 0; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+	.facts-row.big { font-weight: 600; }
+	.facts-row.sub { padding-left: 1rem; font-weight: 400; color: var(--muted); font-size: 0.84rem; }
+	.facts-row:last-child { border-bottom: none; }
+	.facts-divider { height: 4px; background: var(--text); margin: 0.2rem 0; }
+	.calnote { border-radius: var(--radius); padding: 0.5rem 0.8rem; font-size: 0.88rem; font-weight: 700; margin: 0; }
+	.calnote.over { background: #fbeaea; color: #9a2a2a; border: 1px solid #e6b3b3; }
+	.calnote.low { background: #fdf2e3; color: #8a5a12; border: 1px solid #eccf9b; }
 	.totals { font-size: 0.9rem; }
 	.daymicros { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 0.5rem 0.8rem; }
 	.daymicros summary { cursor: pointer; font-weight: 600; }
@@ -399,12 +388,15 @@
 	.miccell b { font-size: 0.9rem; }
 	.miccell span { font-size: 0.7rem; color: var(--muted); }
 	.micflag { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; }
-	.band-good { background: #eef7ed; border-color: #bcdcb6; }
-	.band-low { background: #fff4d6; border-color: #ecd9a0; }
-	.band-high { background: #fff4d6; border-color: #ecd9a0; }
-	.band-low-bad { background: #fdecec; border-color: #e2b3b3; }
-	.band-low-bad .micflag, .band-high-bad .micflag { color: #9a2c2c; }
-	.band-high-bad { background: #fdecec; border-color: #e2b3b3; }
+	/* Weekly band palette: EXACT copy of the planner's (2026-07 parity audit M11). */
+	.band-good { background: #eef7ee; border-color: #cfe6cf; }
+	.band-low, .band-high { background: #fdf7e3; border-color: #ecdca0; }
+	.band-low-bad, .band-high-bad { background: #fbeaea; border-color: #e6b3b3; }
+	.band-low-bad .micflag, .band-high-bad .micflag { color: #9a2a2a; }
+	.micweek { font-size: 0.66rem; font-weight: 700; }
+	.band-good .micweek { color: #2f7a3a; }
+	.band-low .micweek, .band-high .micweek { color: #8a6d1a; }
+	.band-low-bad .micweek, .band-high-bad .micweek { color: #9a2a2a; }
 	/* Shopping */
 	.shopview { display: flex; flex-direction: column; gap: 0.4rem; }
 	.shopview h3 { margin: 0; }
